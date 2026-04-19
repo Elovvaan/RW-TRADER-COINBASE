@@ -1,0 +1,21 @@
+{
+  "name": "rw-trader-cb",
+  "version": "1.0.0",
+  "description": "Production Coinbase Advanced Trade spot swing-trading agent",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "validate": "node src/startup.js",
+    "health": "curl -s http://localhost:3000/health | jq ."
+  },
+  "dependencies": {
+    "jose": "^5.9.6",
+    "ws": "^8.18.0",
+    "dotenv": "^16.4.7"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
