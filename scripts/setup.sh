@@ -6,8 +6,8 @@ echo "==> rw-trader-cb setup"
 # Node version check
 NODE_VER=$(node --version 2>/dev/null || echo "none")
 MAJOR=$(echo "$NODE_VER" | sed 's/v\([0-9]*\).*/\1/')
-if [ "$MAJOR" -lt 20 ] 2>/dev/null; then
-  echo "ERROR: Node.js >= 20 required (found $NODE_VER)"
+if [ "$MAJOR" -lt 18 ] 2>/dev/null; then
+  echo "ERROR: Node.js >= 18 required (found $NODE_VER)"
   exit 1
 fi
 echo "    Node: $NODE_VER ✓"

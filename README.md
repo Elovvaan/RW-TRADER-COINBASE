@@ -47,7 +47,7 @@ rw-trader-cb/
 
 ### 1. Prerequisites
 
-- Node.js ≥ 20
+- Node.js ≥ 18
 - A Coinbase Advanced Trade API key with **view** and **trade** scopes
   - Generate at: https://www.coinbase.com/settings/api
 
@@ -70,7 +70,7 @@ cp .env.example .env
 npm run validate
 ```
 
-This confirms:
+This confirms (when credentials are provided):
 - JWT signs correctly
 - `/accounts` returns data (view scope confirmed)
 - Price snapshots load for each trading pair
@@ -84,6 +84,10 @@ This confirms:
 ```bash
 DRY_RUN=true AUTHORITY=ASSIST npm start
 ```
+
+If Coinbase credentials are not set, the API server still starts and `/health` reports `status: "degraded"` with a credentials message.
+
+The server binds to `HOST` (default `0.0.0.0`) and `PORT` (default `3000`) for container deployment platforms like Railway.
 
 ### Assist mode (signals generated, logged, not auto-executed)
 

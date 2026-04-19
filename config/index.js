@@ -39,8 +39,8 @@ function parseBool(key, fallback) {
 
 export const config = {
   // Coinbase credentials
-  cbApiKeyName: requireEnv('CB_API_KEY_NAME'),
-  cbApiPrivateKey: requireEnv('CB_API_PRIVATE_KEY').replace(/\\n/g, '\n'),
+  cbApiKeyName: optionalEnv('CB_API_KEY_NAME', ''),
+  cbApiPrivateKey: optionalEnv('CB_API_PRIVATE_KEY', '').replace(/\\n/g, '\n'),
 
   // Operational mode
   dryRun: parseBool('DRY_RUN', true),
@@ -65,6 +65,7 @@ export const config = {
 
   // Server
   port: parseInt_('PORT', 3000),
+  host: optionalEnv('HOST', '0.0.0.0'),
   logLevel: optionalEnv('LOG_LEVEL', 'info'),
 
   // Kill switch
@@ -74,6 +75,8 @@ export const config = {
   cbRestBase: 'https://api.coinbase.com',
   cbWsUrl:    'wss://advanced-trade-ws.coinbase.com',
 };
+
+config.hasCoinbaseCredentials = Boolean(config.cbApiKeyName && config.cbApiPrivateKey);
 
 // Validate authority value
 if (!['OFF', 'ASSIST', 'AUTO'].includes(config.authority)) {

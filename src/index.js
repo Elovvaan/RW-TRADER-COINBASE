@@ -9,26 +9,39 @@ import log from './logging/index.js';
 async function main() {
   log.info('BOOT', { pid: process.pid, node: process.version });
 
-  const ok = await runStartupValidation();
-  if (!ok) {
-    process.stderr.write('[BOOT] Startup validation failed. Exiting.\n');
-    process.exit(1);
-  }
-
-  const agent = new TradingAgent();
-  attachAgent(agent);
-
   const server = createApiServer();
-  server.listen(config.port, () => {
-    log.info('HTTP_LISTEN', { port: config.port, dashboard: `http://localhost:${config.port}/` });
+  server.listen(config.port, config.host, () => {
+    const displayHost = config.host === '0.0.0.0' ? 'localhost' : config.host;
+    log.info('HTTP_LISTEN', {
+      host: config.host,
+      port: config.port,
+      dashboard: `http://${displayHost}:${config.port}/`,
+      health: `http://${displayHost}:${config.port}/health`,
+    });
   });
 
-  await agent.start();
+  let agent = null;
+
+  if (config.hasCoinbaseCredentials) {
+    const ok = await runStartupValidation();
+    if (!ok) {
+      process.stderr.write('[BOOT] Startup validation failed. Exiting.\n');
+      process.exit(1);
+    }
+
+    agent = new TradingAgent();
+    attachAgent(agent);
+    await agent.start();
+  } else {
+    log.warn('STARTUP_DEGRADED', {
+      reason: 'Coinbase credentials missing. Agent disabled; API/health endpoints remain available.',
+    });
+  }
 
   // Graceful shutdown
   const shutdown = async (signal) => {
     log.info('SHUTDOWN', { signal });
-    agent.stop();
+    if (agent) agent.stop();
     server.close(() => {
       log.info('SHUTDOWN_COMPLETE', {});
       process.exit(0);
