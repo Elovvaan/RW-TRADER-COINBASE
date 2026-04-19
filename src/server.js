@@ -42,14 +42,21 @@ async function readBody(req) {
 
 const routes = {
   'GET /health': async (_req, res) => {
+    const hasCredentials = config.hasCoinbaseCredentials;
     json(res, 200, {
-      status:    'ok',
-      ts:        new Date().toISOString(),
-      dryRun:    config.dryRun,
+      status: hasCredentials ? 'ok' : 'degraded',
+      ts: new Date().toISOString(),
+      dryRun: config.dryRun,
       authority: config.authority,
       killSwitch: getKillSwitch(),
-      pairs:     config.tradingPairs,
+      pairs: config.tradingPairs,
       wsConnected: _agent?.feed?.connected ?? false,
+      credentials: {
+        configured: hasCredentials,
+        message: hasCredentials
+          ? 'Coinbase credentials loaded.'
+          : 'Coinbase credentials missing. Trading agent is disabled until credentials are provided.',
+      },
     });
   },
 

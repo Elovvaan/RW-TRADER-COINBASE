@@ -10,12 +10,13 @@
     "validate": "node src/startup.js",
     "health": "curl -s http://localhost:3000/health | jq ."
   },
+  "packageManager": "npm@10",
   "dependencies": {
     "jose": "^5.9.6",
     "ws": "^8.18.0",
     "dotenv": "^16.4.7"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=18.0.0"
   }
 }
