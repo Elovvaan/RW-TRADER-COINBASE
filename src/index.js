@@ -11,11 +11,12 @@ async function main() {
 
   const server = createApiServer();
   server.listen(config.port, config.host, () => {
+    const displayHost = config.host === '0.0.0.0' ? 'localhost' : config.host;
     log.info('HTTP_LISTEN', {
       host: config.host,
       port: config.port,
-      dashboard: `http://${config.host}:${config.port}/`,
-      health: `http://${config.host}:${config.port}/health`,
+      dashboard: `http://${displayHost}:${config.port}/`,
+      health: `http://${displayHost}:${config.port}/health`,
     });
   });
 
