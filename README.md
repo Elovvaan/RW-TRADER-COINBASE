@@ -87,6 +87,8 @@ DRY_RUN=true AUTHORITY=ASSIST npm start
 
 If Coinbase credentials are not set, the API server still starts and `/health` reports `status: "degraded"` with a credentials message.
 
+The server binds to `HOST` (default `0.0.0.0`) and `PORT` (default `3000`) for container deployment platforms like Railway.
+
 ### Assist mode (signals generated, logged, not auto-executed)
 
 ```bash
