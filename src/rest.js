@@ -1,7 +1,7 @@
 // src/rest.js – Shared authenticated REST client for CB Advanced Trade v3
 
 import config from '../config/index.js';
-import { authHeaders } from './auth/index.js';
+import { authHeaders, normalizeRequestPath, getRestHost } from './auth/index.js';
 import log from './logging/index.js';
 
 const BASE = config.cbRestBase;
@@ -13,12 +13,10 @@ const BASE = config.cbRestBase;
 export async function cbFetch(method, path, body = null) {
   const requestPath = normalizeRequestPath(path);
   const url = `${BASE}${requestPath}`;
-  const parsed = new URL(url);
   log.debug('REST_REQUEST', {
     method: method.toUpperCase(),
-    host: parsed.host,
-    path: parsed.pathname,
-    query: parsed.search || '',
+    host: getRestHost(),
+    path: requestPath,
   });
 
   const headers = await authHeaders(method, path);
@@ -51,20 +49,6 @@ export async function cbFetch(method, path, body = null) {
 
   log.debug('REST_OK', { method: method.toUpperCase(), path: requestPath, status: res.status });
   return json;
-}
-
-function normalizeRequestPath(path) {
-  if (!path || typeof path !== 'string') {
-    throw new Error('[REST] path must be a non-empty string');
-  }
-  if (path.startsWith('http://') || path.startsWith('https://')) {
-    const u = new URL(path);
-    return `${u.pathname}${u.search}`;
-  }
-  if (!path.startsWith('/')) {
-    throw new Error(`[REST] path must start with "/". Got: "${path}"`);
-  }
-  return path;
 }
 
 export default cbFetch;

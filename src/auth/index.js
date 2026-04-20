@@ -14,6 +14,7 @@ let _privateKey = null;
 let _privateKeyImportLogged = false;
 let _normalizedSigningKey = null;
 const KEY_RESOURCE_RE = /^organizations\/[^/]+\/apiKeys\/[^/]+$/;
+const TOKEN_EXPIRY_SECONDS = 120;
 
 function normalizePrivateKey(rawValue) {
   return rawValue.includes('\\n') ? rawValue.replace(/\\n/g, '\n') : rawValue;
@@ -38,7 +39,7 @@ function getSigningKeyIdentifier() {
   return _normalizedSigningKey;
 }
 
-function normalizeRequestPath(path) {
+export function normalizeRequestPath(path) {
   if (!path || typeof path !== 'string') {
     throw new Error('[AUTH] Request path must be a non-empty string.');
   }
@@ -52,7 +53,7 @@ function normalizeRequestPath(path) {
   return path;
 }
 
-function getRestHost() {
+export function getRestHost() {
   try {
     return new URL(config.cbRestBase).host;
   } catch {
@@ -135,7 +136,7 @@ export async function buildJWT(method, path) {
     sub: signingKeyIdentifier,
     iss: 'cdp',
     nbf: now,
-    exp: now + 120, // 2-minute expiry
+    exp: now + TOKEN_EXPIRY_SECONDS,
     uri,
   })
     .setProtectedHeader({
