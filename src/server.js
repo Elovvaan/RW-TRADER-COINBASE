@@ -43,8 +43,9 @@ async function readBody(req) {
 const routes = {
   'GET /health': async (_req, res) => {
     const hasCredentials = config.hasCoinbaseCredentials;
+    const agentRunning = Boolean(_agent);
     json(res, 200, {
-      status: hasCredentials ? 'ok' : 'degraded',
+      status: hasCredentials && agentRunning ? 'ok' : 'degraded',
       ts: new Date().toISOString(),
       dryRun: config.dryRun,
       authority: config.authority,
@@ -53,9 +54,11 @@ const routes = {
       wsConnected: _agent?.feed?.connected ?? false,
       credentials: {
         configured: hasCredentials,
-        message: hasCredentials
-          ? 'Coinbase credentials loaded.'
-          : 'Coinbase credentials missing. Trading agent is disabled until credentials are provided.',
+        message: !hasCredentials
+          ? 'Coinbase credentials missing. Trading agent is disabled until credentials are provided.'
+          : (agentRunning
+              ? 'Coinbase credentials loaded and trading agent running.'
+              : 'Coinbase credentials loaded, but startup validation failed. Running in degraded mode.'),
       },
     });
   },
