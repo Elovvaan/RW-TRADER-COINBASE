@@ -35,6 +35,10 @@ async function getPrivateKey() {
   const keyFormat = detectPrivateKeyFormat(normalizedKey);
 
   try {
+    if (keyFormat === 'EMPTY') {
+      throw new Error('Private key is empty or missing.');
+    }
+
     if (keyFormat === 'PKCS8_PRIVATE_KEY') {
       _privateKey = await importPKCS8(normalizedKey, 'ES256');
       return _privateKey;
