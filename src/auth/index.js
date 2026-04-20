@@ -58,8 +58,9 @@ async function getPrivateKey() {
       return _privateKey;
     }
 
+    throw new Error(`[AUTH] Unsupported private key format after detection: ${keyFormat}.`);
   } catch (err) {
-    throw new Error(`[AUTH] Failed to import private key conversion/import. Detected format: ${keyFormat}. ${err.message}`);
+    throw new Error(`[AUTH] Failed to convert or import private key. Detected format: ${keyFormat}. ${err.message}`);
   }
 }
 
