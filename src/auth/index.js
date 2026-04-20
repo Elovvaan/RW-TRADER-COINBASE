@@ -46,9 +46,8 @@ async function getPrivateKey() {
       return _privateKey;
     }
 
-    throw new Error(`[AUTH] Unsupported private key format detected: ${keyFormat}. Expected EC_PRIVATE_KEY or PKCS8_PRIVATE_KEY.`);
+    throw new Error(`Unsupported private key format. Expected EC_PRIVATE_KEY or PKCS8_PRIVATE_KEY.`);
   } catch (err) {
-    if (keyFormat === 'UNKNOWN' || keyFormat === 'EMPTY') throw err;
     throw new Error(`[AUTH] Failed to import private key. Detected format: ${keyFormat}. ${err.message}`);
   }
 }
@@ -101,7 +100,6 @@ export async function validateCredentials() {
   try {
     await buildJWT('GET', '/api/v3/brokerage/accounts');
     log.authSuccess({ keyName: config.cbApiKeyName });
-    return _privateKey;
   } catch (err) {
     log.authFailure({ error: err.message });
     throw err;
