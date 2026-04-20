@@ -3,7 +3,7 @@
 // before the agent enters its main loop.
 
 import 'dotenv/config';
-import { validateCredentials } from './auth/index.js';
+import { validateCredentials, AUTH_DIAGNOSTIC_PATH } from './auth/index.js';
 import { listAccounts } from './accounts/index.js';
 import { listProducts, getPriceSnapshot } from './products/index.js';
 import { cbFetch } from './rest.js';
@@ -49,7 +49,7 @@ export async function runStartupValidation() {
   }
 
   // ── 3. First authenticated REST request diagnostic ──────────────────────────
-  const probePath = '/api/v3/brokerage/accounts?limit=1';
+  const probePath = AUTH_DIAGNOSTIC_PATH;
   const probeHost = new URL(config.cbRestBase).host;
   log.info('STARTUP_AUTH_ENDPOINT', { host: probeHost, path: probePath });
   try {
@@ -65,11 +65,6 @@ export async function runStartupValidation() {
       error: err.message,
     });
     errors.push(`First authenticated request failed (${status ?? 'unknown'}): ${err.message}`);
-  }
-
-  if (errors.length) {
-    _fail(errors, warnings);
-    return false;
   }
 
   // ── 4. Account access ──────────────────────────────────────────────────────

@@ -15,6 +15,7 @@ let _privateKeyImportLogged = false;
 let _normalizedSigningKey = null;
 const KEY_RESOURCE_RE = /^organizations\/[^/]+\/apiKeys\/[^/]+$/;
 const TOKEN_EXPIRY_SECONDS = 120;
+export const AUTH_DIAGNOSTIC_PATH = '/api/v3/brokerage/accounts?limit=1';
 
 function normalizePrivateKey(rawValue) {
   return rawValue.includes('\\n') ? rawValue.replace(/\\n/g, '\n') : rawValue;
@@ -168,7 +169,7 @@ export async function authHeaders(method, path) {
  */
 export async function validateCredentials() {
   try {
-    await buildJWT('GET', '/api/v3/brokerage/accounts?limit=1');
+    await buildJWT('GET', AUTH_DIAGNOSTIC_PATH);
     log.info('AUTH_TOKEN_CREATION_SUCCESS', { keyName: getSigningKeyIdentifier() });
     log.authSuccess({ keyName: getSigningKeyIdentifier() });
   } catch (err) {
