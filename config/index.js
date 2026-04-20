@@ -40,7 +40,7 @@ function parseBool(key, fallback) {
 export const config = {
   // Coinbase credentials
   cbApiKeyName: optionalEnv('CB_API_KEY_NAME', ''),
-  cbApiPrivateKey: optionalEnv('CB_API_PRIVATE_KEY', '').replace(/\\n/g, '\n'),
+  cbApiPrivateKey: optionalEnv('CB_API_PRIVATE_KEY', ''),
 
   // Operational mode
   dryRun: parseBool('DRY_RUN', true),
