@@ -34,11 +34,15 @@ async function getPrivateKey() {
   const normalizedKey = normalizePrivateKey(rawKey);
   const keyFormat = detectPrivateKeyFormat(normalizedKey);
 
-  try {
-    if (keyFormat === 'EMPTY') {
-      throw new Error('Private key is empty or missing.');
-    }
+  if (keyFormat === 'EMPTY') {
+    throw new Error('[AUTH] Failed to import private key. Detected format: EMPTY. Private key is empty or missing.');
+  }
 
+  if (keyFormat === 'UNKNOWN') {
+    throw new Error('[AUTH] Failed to import private key. Detected format: UNKNOWN. Expected EC_PRIVATE_KEY or PKCS8_PRIVATE_KEY.');
+  }
+
+  try {
     if (keyFormat === 'PKCS8_PRIVATE_KEY') {
       _privateKey = await importPKCS8(normalizedKey, 'ES256');
       return _privateKey;
@@ -50,9 +54,9 @@ async function getPrivateKey() {
       return _privateKey;
     }
 
-    throw new Error(`Unsupported private key format. Expected EC_PRIVATE_KEY or PKCS8_PRIVATE_KEY.`);
+    throw new Error(`[AUTH] Unsupported private key format after detection: ${keyFormat}.`);
   } catch (err) {
-    throw new Error(`[AUTH] Failed to import private key. Detected format: ${keyFormat}. ${err.message}`);
+    throw new Error(`[AUTH] Failed to import private key conversion/import. Detected format: ${keyFormat}. ${err.message}`);
   }
 }
 
