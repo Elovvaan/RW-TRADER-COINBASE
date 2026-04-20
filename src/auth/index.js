@@ -24,8 +24,12 @@ function detectPrivateKeyFormat(pem) {
 }
 
 function convertEcPemToPkcs8Pem(ecPem) {
-  const keyObj = createPrivateKey({ key: ecPem, format: 'pem', type: 'sec1' });
-  return keyObj.export({ format: 'pem', type: 'pkcs8' }).toString();
+  try {
+    const keyObj = createPrivateKey({ key: ecPem, format: 'pem', type: 'sec1' });
+    return keyObj.export({ format: 'pem', type: 'pkcs8' }).toString();
+  } catch (err) {
+    throw new Error(`[AUTH] SEC1-to-PKCS8 conversion failed: ${err.message}`);
+  }
 }
 
 async function getPrivateKey() {
@@ -54,7 +58,6 @@ async function getPrivateKey() {
       return _privateKey;
     }
 
-    throw new Error(`[AUTH] Unsupported private key format after detection: ${keyFormat}.`);
   } catch (err) {
     throw new Error(`[AUTH] Failed to import private key conversion/import. Detected format: ${keyFormat}. ${err.message}`);
   }
