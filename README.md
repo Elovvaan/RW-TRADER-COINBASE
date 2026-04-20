@@ -61,9 +61,7 @@ npm install
 
 ```bash
 cp .env.example .env
-# Edit .env:
-# - CB_API_KEY_NAME must be: organizations/{org_id}/apiKeys/{key_id}
-# - CB_API_PRIVATE_KEY must be the matching EC private key PEM
+# Edit .env — fill in CB_API_KEY_NAME and CB_API_PRIVATE_KEY
 ```
 
 ### 4. Validate credentials
