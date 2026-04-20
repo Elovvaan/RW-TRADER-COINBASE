@@ -3,22 +3,53 @@
 // Reference: https://docs.cdp.coinbase.com/advanced-trade/docs/rest-api-auth
 
 import { SignJWT, importPKCS8 } from 'jose';
-import { createHash, randomBytes } from 'crypto';
+import { createPrivateKey, randomBytes } from 'crypto';
 import config from '../../config/index.js';
 import log from '../logging/index.js';
 
-// CB Advanced Trade requires the private key in PKCS8 format.
-// The .env stores it as EC PEM; jose handles the import.
+// CB Advanced Trade uses ES256 JWT signing.
+// Accept both SEC1 EC PEM and PKCS#8 PEM from env, including escaped newlines.
 
 let _privateKey = null;
 
+function normalizePrivateKey(rawValue) {
+  return rawValue.includes('\\n') ? rawValue.replace(/\\n/g, '\n') : rawValue;
+}
+
+function detectPrivateKeyFormat(pem) {
+  if (pem.includes('-----BEGIN EC PRIVATE KEY-----')) return 'EC_PRIVATE_KEY';
+  if (pem.includes('-----BEGIN PRIVATE KEY-----')) return 'PKCS8_PRIVATE_KEY';
+  if (!pem.trim()) return 'EMPTY';
+  return 'UNKNOWN';
+}
+
+function convertEcPemToPkcs8Pem(ecPem) {
+  const keyObj = createPrivateKey({ key: ecPem, format: 'pem', type: 'sec1' });
+  return keyObj.export({ format: 'pem', type: 'pkcs8' }).toString();
+}
+
 async function getPrivateKey() {
   if (_privateKey) return _privateKey;
+  const rawKey = config.cbApiPrivateKey;
+  const normalizedKey = normalizePrivateKey(rawKey);
+  const keyFormat = detectPrivateKeyFormat(normalizedKey);
+
   try {
-    _privateKey = await importPKCS8(config.cbApiPrivateKey, 'ES256');
-    return _privateKey;
+    if (keyFormat === 'PKCS8_PRIVATE_KEY') {
+      _privateKey = await importPKCS8(normalizedKey, 'ES256');
+      return _privateKey;
+    }
+
+    if (keyFormat === 'EC_PRIVATE_KEY') {
+      const pkcs8Pem = convertEcPemToPkcs8Pem(normalizedKey);
+      _privateKey = await importPKCS8(pkcs8Pem, 'ES256');
+      return _privateKey;
+    }
+
+    throw new Error(`[AUTH] Unsupported private key format detected: ${keyFormat}. Expected EC_PRIVATE_KEY or PKCS8_PRIVATE_KEY.`);
   } catch (err) {
-    throw new Error(`[AUTH] Failed to import private key: ${err.message}`);
+    if (keyFormat === 'UNKNOWN' || keyFormat === 'EMPTY') throw err;
+    throw new Error(`[AUTH] Failed to import private key. Detected format: ${keyFormat}. ${err.message}`);
   }
 }
 
@@ -70,6 +101,7 @@ export async function validateCredentials() {
   try {
     await buildJWT('GET', '/api/v3/brokerage/accounts');
     log.authSuccess({ keyName: config.cbApiKeyName });
+    return _privateKey;
   } catch (err) {
     log.authFailure({ error: err.message });
     throw err;
