@@ -11,9 +11,55 @@ import log from '../logging/index.js';
 // Accept both SEC1 EC PEM and PKCS#8 PEM from env, including escaped newlines.
 
 let _privateKey = null;
+let _privateKeyImportLogged = false;
+let _normalizedSigningKey = null;
+const API_KEY_RESOURCE_NAME_PATTERN = /^organizations\/[^/]+\/apiKeys\/[^/]+$/;
+const TOKEN_EXPIRY_SECONDS = 120;
+export const AUTH_DIAGNOSTIC_PATH = '/api/v3/brokerage/accounts?limit=1';
 
 function normalizePrivateKey(rawValue) {
   return rawValue.includes('\\n') ? rawValue.replace(/\\n/g, '\n') : rawValue;
+}
+
+function normalizeSigningKeyIdentifier(rawValue) {
+  const value = (rawValue || '').trim();
+  if (!value) {
+    throw new Error('[AUTH] Missing CB_API_KEY_NAME. Expected Coinbase API key resource name: organizations/{org_id}/apiKeys/{key_id}.');
+  }
+  if (!API_KEY_RESOURCE_NAME_PATTERN.test(value)) {
+    throw new Error(
+      `[AUTH] Invalid CB_API_KEY_NAME format "${value}". Coinbase Advanced Trade requires the full key resource name: organizations/{org_id}/apiKeys/{key_id}.`
+    );
+  }
+  return value;
+}
+
+function getSigningKeyIdentifier() {
+  if (_normalizedSigningKey) return _normalizedSigningKey;
+  _normalizedSigningKey = normalizeSigningKeyIdentifier(config.cbApiKeyName);
+  return _normalizedSigningKey;
+}
+
+export function normalizeRequestPath(path) {
+  if (!path || typeof path !== 'string') {
+    throw new Error('[AUTH] Request path must be a non-empty string.');
+  }
+  if (path.startsWith('http://') || path.startsWith('https://')) {
+    const u = new URL(path);
+    return `${u.pathname}${u.search}`;
+  }
+  if (!path.startsWith('/')) {
+    throw new Error(`[AUTH] Request path must start with "/". Got: "${path}"`);
+  }
+  return path;
+}
+
+export function getRestHost() {
+  try {
+    return new URL(config.cbRestBase).host;
+  } catch {
+    return 'api.coinbase.com';
+  }
 }
 
 function detectPrivateKeyFormat(pem) {
@@ -49,12 +95,20 @@ async function getPrivateKey() {
   try {
     if (keyFormat === 'PKCS8_PRIVATE_KEY') {
       _privateKey = await importPKCS8(normalizedKey, 'ES256');
+      if (!_privateKeyImportLogged) {
+        log.info('AUTH_KEY_IMPORT_SUCCESS', { keyFormat });
+        _privateKeyImportLogged = true;
+      }
       return _privateKey;
     }
 
     if (keyFormat === 'EC_PRIVATE_KEY') {
       const pkcs8Pem = convertEcPemToPkcs8Pem(normalizedKey);
       _privateKey = await importPKCS8(pkcs8Pem, 'ES256');
+      if (!_privateKeyImportLogged) {
+        log.info('AUTH_KEY_IMPORT_SUCCESS', { keyFormat, convertedTo: 'PKCS8_PRIVATE_KEY' });
+        _privateKeyImportLogged = true;
+      }
       return _privateKey;
     }
 
@@ -72,19 +126,23 @@ async function getPrivateKey() {
  */
 export async function buildJWT(method, path) {
   const key = await getPrivateKey();
-  const uri = `${method} api.coinbase.com${path}`;
+  const signingKeyIdentifier = getSigningKeyIdentifier();
+  const methodUpper = method.toUpperCase();
+  const requestPath = normalizeRequestPath(path);
+  const uri = `${methodUpper} ${getRestHost()}${requestPath}`;
   const nonce = randomBytes(16).toString('hex');
+  const now = Math.floor(Date.now() / 1000);
 
   const jwt = await new SignJWT({
-    sub: config.cbApiKeyName,
+    sub: signingKeyIdentifier,
     iss: 'cdp',
-    nbf: Math.floor(Date.now() / 1000),
-    exp: Math.floor(Date.now() / 1000) + 120, // 2-minute expiry
+    nbf: now,
+    exp: now + TOKEN_EXPIRY_SECONDS,
     uri,
   })
     .setProtectedHeader({
       alg: 'ES256',
-      kid: config.cbApiKeyName,
+      kid: signingKeyIdentifier,
       nonce,
     })
     .sign(key);
@@ -99,6 +157,7 @@ export async function authHeaders(method, path) {
   const token = await buildJWT(method, path);
   return {
     Authorization: `Bearer ${token}`,
+    Accept: 'application/json',
     'Content-Type': 'application/json',
     'CB-VERSION': '2024-02-14',
   };
@@ -110,8 +169,9 @@ export async function authHeaders(method, path) {
  */
 export async function validateCredentials() {
   try {
-    await buildJWT('GET', '/api/v3/brokerage/accounts');
-    log.authSuccess({ keyName: config.cbApiKeyName });
+    await buildJWT('GET', AUTH_DIAGNOSTIC_PATH);
+    log.info('AUTH_TOKEN_CREATION_SUCCESS', { keyName: getSigningKeyIdentifier() });
+    log.authSuccess({ keyName: getSigningKeyIdentifier() });
   } catch (err) {
     log.authFailure({ error: err.message });
     throw err;

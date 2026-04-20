@@ -3,9 +3,10 @@
 // before the agent enters its main loop.
 
 import 'dotenv/config';
-import { validateCredentials } from './auth/index.js';
+import { validateCredentials, AUTH_DIAGNOSTIC_PATH } from './auth/index.js';
 import { listAccounts } from './accounts/index.js';
 import { listProducts, getPriceSnapshot } from './products/index.js';
+import { cbFetch } from './rest.js';
 import config from '../config/index.js';
 import log from './logging/index.js';
 
@@ -47,7 +48,26 @@ export async function runStartupValidation() {
     return false;
   }
 
-  // ── 3. Account access ──────────────────────────────────────────────────────
+  // ── 3. First authenticated REST request diagnostic ──────────────────────────
+  const probePath = AUTH_DIAGNOSTIC_PATH;
+  const probeHost = new URL(config.cbRestBase).host;
+  log.info('STARTUP_AUTH_ENDPOINT', { host: probeHost, path: probePath });
+  try {
+    await cbFetch('GET', probePath);
+    log.info('STARTUP_AUTH_REQUEST_RESULT', { host: probeHost, path: probePath, status: 200 });
+  } catch (err) {
+    const status = err?.status ?? null;
+    log.warn('STARTUP_AUTH_REQUEST_RESULT', {
+      host: probeHost,
+      path: probePath,
+      status,
+      unauthorized: status === 401,
+      error: err.message,
+    });
+    errors.push(`First authenticated request failed (${status ?? 'unknown'}): ${err.message}`);
+  }
+
+  // ── 4. Account access ──────────────────────────────────────────────────────
   let accounts = [];
   try {
     accounts = await listAccounts();
@@ -63,7 +83,7 @@ export async function runStartupValidation() {
     }
   }
 
-  // ── 4. Product access ──────────────────────────────────────────────────────
+  // ── 5. Product access ──────────────────────────────────────────────────────
   try {
     const products = await listProducts();
     log.info('STARTUP_PRODUCTS', { count: products.length });
@@ -74,7 +94,7 @@ export async function runStartupValidation() {
     errors.push(`Product list error: ${err.message}`);
   }
 
-  // ── 5. Price snapshot for each trading pair ────────────────────────────────
+  // ── 6. Price snapshot for each trading pair ────────────────────────────────
   for (const pair of config.tradingPairs) {
     try {
       const snap = await getPriceSnapshot(pair);

@@ -25,8 +25,10 @@ async function main() {
   if (config.hasCoinbaseCredentials) {
     const ok = await runStartupValidation();
     if (!ok) {
-      process.stderr.write('[BOOT] Startup validation failed. Exiting.\n');
-      process.exit(1);
+      log.warn('STARTUP_DEGRADED', {
+        reason: 'Startup validation failed. Trading agent disabled; API/health endpoints remain available.',
+      });
+      return;
     }
 
     agent = new TradingAgent();
