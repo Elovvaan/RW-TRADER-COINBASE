@@ -13,7 +13,7 @@ import log from '../logging/index.js';
 let _privateKey = null;
 let _privateKeyImportLogged = false;
 let _normalizedSigningKey = null;
-const KEY_RESOURCE_RE = /^organizations\/[^/]+\/apiKeys\/[^/]+$/;
+const API_KEY_RESOURCE_NAME_PATTERN = /^organizations\/[^/]+\/apiKeys\/[^/]+$/;
 const TOKEN_EXPIRY_SECONDS = 120;
 export const AUTH_DIAGNOSTIC_PATH = '/api/v3/brokerage/accounts?limit=1';
 
@@ -26,7 +26,7 @@ function normalizeSigningKeyIdentifier(rawValue) {
   if (!value) {
     throw new Error('[AUTH] Missing CB_API_KEY_NAME. Expected Coinbase API key resource name: organizations/{org_id}/apiKeys/{key_id}.');
   }
-  if (!KEY_RESOURCE_RE.test(value)) {
+  if (!API_KEY_RESOURCE_NAME_PATTERN.test(value)) {
     throw new Error(
       `[AUTH] Invalid CB_API_KEY_NAME format "${value}". Coinbase Advanced Trade requires the full key resource name: organizations/{org_id}/apiKeys/{key_id}.`
     );

@@ -19,7 +19,7 @@ export async function cbFetch(method, path, body = null) {
     path: requestPath,
   });
 
-  const headers = await authHeaders(method, path);
+  const headers = await authHeaders(method, requestPath);
   const opts = { method, headers };
   if (body) opts.body = JSON.stringify(body);
 
