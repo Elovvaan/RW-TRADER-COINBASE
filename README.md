@@ -48,8 +48,11 @@ rw-trader-cb/
 ### 1. Prerequisites
 
 - Node.js ≥ 18
-- A Coinbase Advanced Trade API key with **view** and **trade** scopes
-  - Generate at: https://www.coinbase.com/settings/api
+- A Coinbase Advanced Trade (CDP) API key with **view** and **trade** permissions
+  - Generate in Coinbase Developer Platform (CDP) Access for Advanced Trade:
+    https://portal.cdp.coinbase.com/access/api
+  - `CB_API_KEY_NAME` must be the full resource name:
+    `organizations/{org_id}/apiKeys/{key_id}`
 
 ### 2. Install
 
