@@ -15,8 +15,10 @@ let _privateKeyImportLogged = false;
 let _normalizedSigningKey = null;
 let _keyNameDiagnosticLogged = false;
 let _authModeLogged = false;
+let _startupAuthDebugLogged = false;
 const API_KEY_RESOURCE_NAME_PATTERN = /^organizations\/[^/]+\/apiKeys\/[^/]+$/;
 const TOKEN_EXPIRY_SECONDS = 120;
+const AUTH_HEADER_SCHEME = 'Bearer';
 export const AUTH_DIAGNOSTIC_PATH = '/api/v3/brokerage/accounts?limit=1';
 
 function normalizePrivateKey(rawValue) {
@@ -121,6 +123,12 @@ export function normalizeRequestPath(path) {
   return path;
 }
 
+export function getJwtBoundPath(path) {
+  const requestPath = normalizeRequestPath(path);
+  const q = requestPath.indexOf('?');
+  return q === -1 ? requestPath : requestPath.slice(0, q);
+}
+
 export function getRestHost() {
   try {
     return new URL(config.cbRestBase).host;
@@ -195,8 +203,8 @@ export async function buildJWT(method, path) {
   const key = await getPrivateKey();
   const signingKeyIdentifier = getSigningKeyIdentifier();
   const methodUpper = method.toUpperCase();
-  const requestPath = normalizeRequestPath(path);
-  const uri = `${methodUpper} ${getRestHost()}${requestPath}`;
+  const uriPath = getJwtBoundPath(path);
+  const uri = `${methodUpper} ${getRestHost()}${uriPath}`;
   const nonce = randomBytes(16).toString('hex');
   const now = Math.floor(Date.now() / 1000);
 
@@ -223,11 +231,27 @@ export async function buildJWT(method, path) {
 export async function authHeaders(method, path) {
   const token = await buildJWT(method, path);
   return {
-    Authorization: `Bearer ${token}`,
+    Authorization: `${AUTH_HEADER_SCHEME} ${token}`,
     Accept: 'application/json',
     'Content-Type': 'application/json',
     'CB-VERSION': '2024-02-14',
   };
+}
+
+function logStartupAuthDebug(method, path) {
+  if (_startupAuthDebugLogged) return;
+  const keyInfo = describeSigningKeyIdentifier(config.cbApiKeyName);
+  log.info('STARTUP_AUTH_DEBUG', {
+    keyNameShape: keyInfo.shape,
+    keyNameMasked: keyInfo.masked,
+    jwtCreationSuccess: true,
+    requestMethod: method.toUpperCase(),
+    requestHost: getRestHost(),
+    requestPath: normalizeRequestPath(path),
+    jwtBoundPath: getJwtBoundPath(path),
+    authHeaderScheme: AUTH_HEADER_SCHEME,
+  });
+  _startupAuthDebugLogged = true;
 }
 
 /**
@@ -239,6 +263,7 @@ export async function validateCredentials() {
     logAuthMode();
     logSigningKeyNameShape();
     await buildJWT('GET', AUTH_DIAGNOSTIC_PATH);
+    logStartupAuthDebug('GET', AUTH_DIAGNOSTIC_PATH);
     const keyInfo = describeSigningKeyIdentifier(getSigningKeyIdentifier());
     log.info('AUTH_TOKEN_CREATION_SUCCESS', {
       keyNameShape: keyInfo.shape,
