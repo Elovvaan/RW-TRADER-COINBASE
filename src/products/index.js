@@ -1,6 +1,20 @@
 // src/products/index.js – Products & price snapshots via CB Advanced Trade v3
 
 import { cbFetch } from '../rest.js';
+import log from '../logging/index.js';
+
+const CANDLE_SECONDS_BY_GRANULARITY = {
+  ONE_MINUTE: 60,
+  FIVE_MINUTE: 300,
+  FIFTEEN_MINUTE: 900,
+  THIRTY_MINUTE: 1800,
+  ONE_HOUR: 3600,
+  TWO_HOUR: 7200,
+  SIX_HOUR: 21600,
+  ONE_DAY: 86400,
+};
+
+const MAX_CANDLES_PER_REQUEST = 350;
 
 /**
  * List all products or filter by type.
@@ -122,17 +136,84 @@ export async function getProduct(productId) {
  * granularity: ONE_MINUTE | FIVE_MINUTE | FIFTEEN_MINUTE | THIRTY_MINUTE | ONE_HOUR | TWO_HOUR | SIX_HOUR | ONE_DAY
  */
 export async function getCandles(productId, granularity, start, end) {
-  const path = `/api/v3/brokerage/products/${productId}/candles?granularity=${granularity}&start=${start}&end=${end}`;
-  const data = await cbFetch('GET', path);
-  // Returns array of [start, low, high, open, close, volume]
-  return (data.candles || []).map(c => ({
-    time:   parseInt(c.start, 10),
-    low:    parseFloat(c.low),
-    high:   parseFloat(c.high),
-    open:   parseFloat(c.open),
-    close:  parseFloat(c.close),
-    volume: parseFloat(c.volume),
-  }));
+  const granularitySeconds = CANDLE_SECONDS_BY_GRANULARITY[granularity];
+  if (!granularitySeconds) {
+    throw new Error(`[PRODUCTS] Unsupported candle granularity: ${granularity}`);
+  }
+
+  const endSec = _toUnixSeconds(end);
+  const startSecInput = _toUnixSeconds(start);
+  const maxSpanSeconds = granularitySeconds * MAX_CANDLES_PER_REQUEST;
+  const startSec = Math.max(0, Math.max(startSecInput, endSec - maxSpanSeconds));
+
+  const query = new URLSearchParams({
+    start: String(startSec),
+    end: String(endSec),
+    granularity,
+  });
+  const path = `/api/v3/brokerage/products/${productId}/candles?${query.toString()}`;
+
+  try {
+    const { data, meta } = await cbFetch('GET', path, null, { withMeta: true });
+    log.info('CANDLES_REQUEST_RESULT', {
+      productId,
+      granularity,
+      path,
+      httpStatus: meta.status,
+    });
+    return _parseCandles(data?.candles);
+  } catch (err) {
+    log.warn('CANDLES_REQUEST_FAILED', {
+      productId,
+      granularity,
+      path,
+      httpStatus: _extractErrorStatus(err),
+      responseShapeKeys: Object.keys(err?.body || {}),
+      error: err.message,
+    });
+    throw err;
+  }
+}
+
+function _toUnixSeconds(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) {
+    throw new Error(`[PRODUCTS] Invalid candle timestamp: ${value}`);
+  }
+  return Math.max(0, Math.floor(n));
+}
+
+function _parseCandles(candles) {
+  if (!Array.isArray(candles)) return [];
+  const parsed = [];
+  for (const candle of candles) {
+    const normalized = _normalizeCandle(candle);
+    if (normalized) parsed.push(normalized);
+  }
+  return parsed;
+}
+
+function _normalizeCandle(candle) {
+  const source = Array.isArray(candle)
+    ? {
+        start: candle[0],
+        low: candle[1],
+        high: candle[2],
+        open: candle[3],
+        close: candle[4],
+        volume: candle[5],
+      }
+    : candle || {};
+
+  const time = Number.parseInt(source.start, 10);
+  const low = Number.parseFloat(source.low);
+  const high = Number.parseFloat(source.high);
+  const open = Number.parseFloat(source.open);
+  const close = Number.parseFloat(source.close);
+  const volume = Number.parseFloat(source.volume);
+
+  if (![time, low, high, open, close, volume].every(Number.isFinite)) return null;
+  return { time, low, high, open, close, volume };
 }
 
 function _extractPricebooks(data) {
