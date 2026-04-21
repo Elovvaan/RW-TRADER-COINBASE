@@ -8,6 +8,7 @@
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
     "validate": "node src/startup.js",
+    "verify:auth": "node src/verify-auth.js",
     "health": "curl -s http://localhost:3000/health | jq ."
   },
   "packageManager": "npm@10",
