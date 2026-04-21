@@ -27,7 +27,7 @@ export async function getPriceSnapshot(productId) {
 }
 
 /**
- * Fetch price snapshots for multiple products in one call.
+ * Fetch price snapshots for multiple products via one request per product.
  * Returns map: { productId → snapshot }
  */
 export async function getPriceSnapshots(productIds) {
@@ -36,45 +36,77 @@ export async function getPriceSnapshots(productIds) {
 }
 
 export async function getPriceSnapshotsWithDiagnostics(productIds) {
-  const ids = productIds.join(',');
-  const path = `/api/v3/brokerage/best_bid_ask?product_ids=${ids}`;
-  const { data, meta } = await cbFetch('GET', path, null, { withMeta: true });
-  const shapeKeys = Object.keys(data || {});
-  const pricebooks = _extractPricebooks(data);
-
-  const snapshots = {};
-  const diagnostics = {};
-
-  for (const pid of productIds) {
-    const pb = pricebooks.find(p => (p.product_id || p.productId) === pid);
-    const parsed = _parseSnapshotFromPricebook(pb, pid);
-    if (parsed.snapshot) snapshots[pid] = parsed.snapshot;
-    diagnostics[pid] = {
-      endpoint: path,
-      productId: pid,
-      httpStatus: meta.status,
-      responseShapeKeys: shapeKeys,
-      missingReason: parsed.missingReason,
+  if (!Array.isArray(productIds) || productIds.length === 0) {
+    return {
+      snapshots: {},
+      diagnostics: {},
+      endpoint: null,
+      status: null,
+      responseShapeKeys: [],
+      endpoints: {},
+      statuses: {},
+      responseShapeKeysByProduct: {},
     };
   }
 
-  for (const pb of pricebooks) {
-    const pid = pb.product_id || pb.productId;
-    if (!pid || snapshots[pid]) continue;
-    const parsed = _parseSnapshotFromPricebook(pb, pid);
-    if (parsed.snapshot) {
-      snapshots[pid] = parsed.snapshot;
+  const snapshots = {};
+  const diagnostics = {};
+  const endpoints = {};
+  const statuses = {};
+  const responseShapeKeysByProduct = {};
+
+  await Promise.all(productIds.map(async (pid) => {
+    const path = `/api/v3/brokerage/best_bid_ask?product_ids=${encodeURIComponent(pid)}`;
+    endpoints[pid] = path;
+    try {
+      const { data, meta } = await cbFetch('GET', path, null, { withMeta: true });
+      const shapeKeys = Object.keys(data || {});
+      const status = meta.status;
+      statuses[pid] = status;
+      responseShapeKeysByProduct[pid] = shapeKeys;
+      const pricebooks = _extractPricebooks(data);
+      const pb = pricebooks.find(p => (p.product_id || p.productId) === pid);
+      const parsed = _parseSnapshotFromPricebook(pb, pid);
+      if (parsed.snapshot) snapshots[pid] = parsed.snapshot;
       diagnostics[pid] = {
         endpoint: path,
         productId: pid,
-        httpStatus: meta.status,
+        httpStatus: status,
         responseShapeKeys: shapeKeys,
-        missingReason: null,
+        missingReason: parsed.missingReason,
+      };
+    } catch (err) {
+      const status = _extractErrorStatus(err);
+      const shapeKeys = Object.keys(err?.body || {});
+      statuses[pid] = status;
+      responseShapeKeysByProduct[pid] = shapeKeys;
+      diagnostics[pid] = {
+        endpoint: path,
+        productId: pid,
+        httpStatus: status,
+        responseShapeKeys: shapeKeys,
+        missingReason: `request_failed: ${err.message}`,
       };
     }
-  }
+  }));
 
-  return { snapshots, diagnostics, endpoint: path, status: meta.status, responseShapeKeys: shapeKeys };
+  const representativeProductId = productIds.find(pid => {
+    const status = statuses[pid];
+    return Number.isInteger(status) && status >= 200 && status < 400;
+  }) || productIds[0];
+  const representativeEndpoint = representativeProductId ? endpoints[representativeProductId] : null;
+  const representativeStatus = representativeProductId ? statuses[representativeProductId] : null;
+  const representativeShapeKeys = representativeProductId ? responseShapeKeysByProduct[representativeProductId] : [];
+  return {
+    snapshots,
+    diagnostics,
+    endpoint: representativeEndpoint,
+    status: representativeStatus,
+    responseShapeKeys: representativeShapeKeys,
+    endpoints,
+    statuses,
+    responseShapeKeysByProduct,
+  };
 }
 
 /**
@@ -155,4 +187,10 @@ function _parseSnapshotFromPricebook(pb, fallbackProductId) {
     },
     missingReason: null,
   };
+}
+
+function _extractErrorStatus(err) {
+  if (Number.isInteger(err?.status)) return err.status;
+  if (Number.isInteger(err?.response?.status)) return err.response.status;
+  return null;
 }
