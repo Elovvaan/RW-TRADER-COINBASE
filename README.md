@@ -166,6 +166,9 @@ All parameters configurable in `.env`.
 # Validate startup
 npm run validate
 
+# Verify only Coinbase auth on one request
+npm run verify:auth
+
 # Health check
 curl http://localhost:3000/health | jq .
 
