@@ -5,7 +5,7 @@
 import 'dotenv/config';
 import { validateCredentials, AUTH_DIAGNOSTIC_PATH } from './auth/index.js';
 import { listAccounts } from './accounts/index.js';
-import { listProducts, getPriceSnapshot } from './products/index.js';
+import { listProducts, getPriceSnapshotsWithDiagnostics } from './products/index.js';
 import { cbFetch } from './rest.js';
 import config from '../config/index.js';
 import log from './logging/index.js';
@@ -95,17 +95,34 @@ export async function runStartupValidation() {
   }
 
   // ── 6. Price snapshot for each trading pair ────────────────────────────────
-  for (const pair of config.tradingPairs) {
-    try {
-      const snap = await getPriceSnapshot(pair);
+  try {
+    const { snapshots, diagnostics } = await getPriceSnapshotsWithDiagnostics(config.tradingPairs);
+    for (const pair of config.tradingPairs) {
+      const snap = snapshots[pair];
+      const diag = diagnostics[pair] || {};
+      const missingReason = !snap ? (diag.missingReason || 'snapshot_not_returned') : null;
+      const logData = {
+        endpoint: diag.endpoint,
+        productId: pair,
+        httpStatus: diag.httpStatus,
+        responseShapeKeys: diag.responseShapeKeys,
+        missingReason,
+      };
+      if (missingReason) {
+        log.warn('STARTUP_SNAPSHOT_DIAGNOSTIC', logData);
+        errors.push(`Price fetch failed for ${pair}: ${missingReason}`);
+        continue;
+      }
+
+      log.info('STARTUP_SNAPSHOT_DIAGNOSTIC', logData);
       if (!snap.price || snap.price <= 0) {
         warnings.push(`${pair}: price returned as ${snap.price} — check product ID.`);
       } else {
         log.info('STARTUP_PRICE_OK', { pair, price: snap.price.toFixed(2) });
       }
-    } catch (err) {
-      errors.push(`Price fetch failed for ${pair}: ${err.message}`);
     }
+  } catch (err) {
+    errors.push(`Price fetch failed for trading pairs: ${err.message}`);
   }
 
   if (errors.length) {

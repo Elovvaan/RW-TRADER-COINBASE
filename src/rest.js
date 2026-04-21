@@ -10,7 +10,7 @@ const BASE = config.cbRestBase;
  * Authenticated fetch wrapper.
  * Throws a descriptive error on non-2xx responses.
  */
-export async function cbFetch(method, path, body = null) {
+export async function cbFetch(method, path, body = null, options = {}) {
   const requestPath = normalizeRequestPath(path);
   const url = `${BASE}${requestPath}`;
   log.debug('REST_REQUEST', {
@@ -48,6 +48,9 @@ export async function cbFetch(method, path, body = null) {
   }
 
   log.debug('REST_OK', { method: method.toUpperCase(), path: requestPath, status: res.status });
+  if (options.withMeta) {
+    return { data: json, meta: { status: res.status, path: requestPath, method: method.toUpperCase() } };
+  }
   return json;
 }
 

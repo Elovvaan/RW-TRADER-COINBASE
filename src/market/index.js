@@ -5,7 +5,7 @@
 import WebSocket from 'ws';
 import { EventEmitter } from 'events';
 import { buildJWT } from '../auth/index.js';
-import { getPriceSnapshots } from '../products/index.js';
+import { getPriceSnapshots, getPriceSnapshotsWithDiagnostics } from '../products/index.js';
 import config from '../../config/index.js';
 import log from '../logging/index.js';
 
@@ -30,6 +30,7 @@ export class MarketFeed extends EventEmitter {
 
   async start() {
     this.stopped = false;
+    await this._bootstrapSnapshotsFromRest();
     await this._connect();
   }
 
@@ -70,6 +71,37 @@ export class MarketFeed extends EventEmitter {
     } catch (err) {
       log.error('WS_CONNECT_ERROR', { error: err.message });
       this._scheduleReconnect();
+    }
+  }
+
+  async _bootstrapSnapshotsFromRest() {
+    try {
+      const { snapshots, diagnostics } = await getPriceSnapshotsWithDiagnostics(this.productIds);
+      for (const pid of this.productIds) {
+        const snap = snapshots[pid];
+        const diag = diagnostics[pid] || {};
+        if (!snap) {
+          log.warn('SNAPSHOT_BOOTSTRAP_MISSING', {
+            endpoint: diag.endpoint,
+            productId: pid,
+            httpStatus: diag.httpStatus,
+            responseShapeKeys: diag.responseShapeKeys,
+            missingReason: diag.missingReason || 'snapshot_not_returned',
+          });
+          continue;
+        }
+        this.snapshots[pid] = snap;
+        this.emit('ticker', snap);
+        log.info('SNAPSHOT_BOOTSTRAP_OK', {
+          endpoint: diag.endpoint,
+          productId: pid,
+          httpStatus: diag.httpStatus,
+          responseShapeKeys: diag.responseShapeKeys,
+          price: snap.price,
+        });
+      }
+    } catch (err) {
+      log.error('SNAPSHOT_BOOTSTRAP_ERROR', { error: err.message });
     }
   }
 
