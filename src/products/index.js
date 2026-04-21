@@ -120,10 +120,10 @@ function _parseSnapshotFromPricebook(pb, fallbackProductId) {
   const askRaw = pb.asks?.[0]?.price ?? pb.best_ask ?? pb.ask ?? pb.bestAsk;
   const priceRaw = pb.price ?? pb.mid_price ?? pb.midPrice;
 
-  const bid = Number.parseFloat(bidRaw);
-  const ask = Number.parseFloat(askRaw);
+  const bid = parseFloat(bidRaw);
+  const ask = parseFloat(askRaw);
 
-  let price = Number.parseFloat(priceRaw);
+  let price = parseFloat(priceRaw);
   if (!Number.isFinite(price)) {
     if (Number.isFinite(bid) && Number.isFinite(ask)) price = (bid + ask) / 2;
     else if (Number.isFinite(bid)) price = bid;
