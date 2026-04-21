@@ -1,7 +1,6 @@
 // src/products/index.js – Products & price snapshots via CB Advanced Trade v3
 
 import cbFetch from '../rest.js';
-import log from '../logging/index.js';
 
 /**
  * List all products or filter by type.
@@ -18,29 +17,13 @@ export async function listProducts(productType = 'SPOT') {
  * Returns { productId, bid, ask, price, spread, spreadPct, ts }
  */
 export async function getPriceSnapshot(productId) {
-  const path = `/api/v3/brokerage/best_bid_ask?product_ids=${productId}`;
-  const data = await cbFetch('GET', path);
-
-  const pricebooks = data.pricebooks || [];
-  const pb = pricebooks.find(p => p.product_id === productId);
-
-  if (!pb) throw new Error(`[PRODUCTS] No pricebook returned for ${productId}`);
-
-  const bid    = parseFloat(pb.bids?.[0]?.price ?? '0');
-  const ask    = parseFloat(pb.asks?.[0]?.price ?? '0');
-  const price  = (bid + ask) / 2;
-  const spread = ask - bid;
-  const spreadPct = bid > 0 ? spread / bid : 0;
-
-  return {
-    productId,
-    bid,
-    ask,
-    price,
-    spread,
-    spreadPct,
-    ts: Date.now(),
-  };
+  const { snapshots, diagnostics } = await getPriceSnapshotsWithDiagnostics([productId]);
+  const snap = snapshots[productId];
+  if (!snap) {
+    const d = diagnostics[productId];
+    throw new Error(`[PRODUCTS] Snapshot missing for ${productId}: ${d?.missingReason ?? 'unknown reason'}`);
+  }
+  return snap;
 }
 
 /**
@@ -48,22 +31,50 @@ export async function getPriceSnapshot(productId) {
  * Returns map: { productId → snapshot }
  */
 export async function getPriceSnapshots(productIds) {
+  const { snapshots } = await getPriceSnapshotsWithDiagnostics(productIds);
+  return snapshots;
+}
+
+export async function getPriceSnapshotsWithDiagnostics(productIds) {
   const ids = productIds.join(',');
   const path = `/api/v3/brokerage/best_bid_ask?product_ids=${ids}`;
-  const data = await cbFetch('GET', path);
-  const pricebooks = data.pricebooks || [];
+  const { data, meta } = await cbFetch('GET', path, null, { withMeta: true });
+  const shapeKeys = Object.keys(data || {});
+  const pricebooks = _extractPricebooks(data);
 
-  const result = {};
-  for (const pb of pricebooks) {
-    const bid    = parseFloat(pb.bids?.[0]?.price ?? '0');
-    const ask    = parseFloat(pb.asks?.[0]?.price ?? '0');
-    const price  = (bid + ask) / 2;
-    const spread = ask - bid;
-    const spreadPct = bid > 0 ? spread / bid : 0;
-    result[pb.product_id] = { productId: pb.product_id, bid, ask, price, spread, spreadPct, ts: Date.now() };
+  const snapshots = {};
+  const diagnostics = {};
+
+  for (const pid of productIds) {
+    const pb = pricebooks.find(p => (p.product_id || p.productId) === pid);
+    const parsed = _parseSnapshotFromPricebook(pb, pid);
+    if (parsed.snapshot) snapshots[pid] = parsed.snapshot;
+    diagnostics[pid] = {
+      endpoint: path,
+      productId: pid,
+      httpStatus: meta.status,
+      responseShapeKeys: shapeKeys,
+      missingReason: parsed.missingReason,
+    };
   }
 
-  return result;
+  for (const pb of pricebooks) {
+    const pid = pb.product_id || pb.productId;
+    if (!pid || snapshots[pid]) continue;
+    const parsed = _parseSnapshotFromPricebook(pb, pid);
+    if (parsed.snapshot) {
+      snapshots[pid] = parsed.snapshot;
+      diagnostics[pid] = {
+        endpoint: path,
+        productId: pid,
+        httpStatus: meta.status,
+        responseShapeKeys: shapeKeys,
+        missingReason: null,
+      };
+    }
+  }
+
+  return { snapshots, diagnostics, endpoint: path, status: meta.status, responseShapeKeys: shapeKeys };
 }
 
 /**
@@ -90,4 +101,58 @@ export async function getCandles(productId, granularity, start, end) {
     close:  parseFloat(c.close),
     volume: parseFloat(c.volume),
   }));
+}
+
+function _extractPricebooks(data) {
+  if (Array.isArray(data?.pricebooks)) return data.pricebooks;
+  if (Array.isArray(data?.books)) return data.books;
+  if (Array.isArray(data?.results)) return data.results;
+  if (Array.isArray(data?.data?.pricebooks)) return data.data.pricebooks;
+  if (Array.isArray(data?.data?.books)) return data.data.books;
+  return [];
+}
+
+function _parseSnapshotFromPricebook(pb, fallbackProductId) {
+  if (!pb) return { snapshot: null, missingReason: 'product_not_found_in_response' };
+
+  const productId = pb.product_id || pb.productId || fallbackProductId;
+  const bidRaw = pb.bids?.[0]?.price ?? pb.best_bid ?? pb.bid ?? pb.bestBid;
+  const askRaw = pb.asks?.[0]?.price ?? pb.best_ask ?? pb.ask ?? pb.bestAsk;
+  const priceRaw = pb.price ?? pb.mid_price ?? pb.midPrice;
+
+  const bid = Number.parseFloat(String(bidRaw ?? 'NaN'));
+  const ask = Number.parseFloat(String(askRaw ?? 'NaN'));
+
+  let price = Number.parseFloat(String(priceRaw ?? 'NaN'));
+  if (!Number.isFinite(price)) {
+    if (Number.isFinite(bid) && Number.isFinite(ask)) price = (bid + ask) / 2;
+    else if (Number.isFinite(bid)) price = bid;
+    else if (Number.isFinite(ask)) price = ask;
+  }
+
+  if (!Number.isFinite(bid) && !Number.isFinite(ask) && !Number.isFinite(price)) {
+    return { snapshot: null, missingReason: 'missing_bid_ask_and_price_fields' };
+  }
+
+  const finalBid = Number.isFinite(bid) ? bid : price;
+  const finalAsk = Number.isFinite(ask) ? ask : price;
+  const spread = finalAsk - finalBid;
+  const spreadPct = finalBid > 0 ? spread / finalBid : 0;
+
+  if (!Number.isFinite(price) || price <= 0) {
+    return { snapshot: null, missingReason: 'non_positive_or_invalid_price' };
+  }
+
+  return {
+    snapshot: {
+      productId,
+      bid: finalBid,
+      ask: finalAsk,
+      price,
+      spread,
+      spreadPct,
+      ts: Date.now(),
+    },
+    missingReason: null,
+  };
 }
