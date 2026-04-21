@@ -1,6 +1,6 @@
 // src/products/index.js – Products & price snapshots via CB Advanced Trade v3
 
-import cbFetch from '../rest.js';
+import { cbFetch } from '../rest.js';
 
 /**
  * List all products or filter by type.
@@ -120,10 +120,10 @@ function _parseSnapshotFromPricebook(pb, fallbackProductId) {
   const askRaw = pb.asks?.[0]?.price ?? pb.best_ask ?? pb.ask ?? pb.bestAsk;
   const priceRaw = pb.price ?? pb.mid_price ?? pb.midPrice;
 
-  const bid = Number.parseFloat(String(bidRaw ?? 'NaN'));
-  const ask = Number.parseFloat(String(askRaw ?? 'NaN'));
+  const bid = Number.parseFloat(bidRaw);
+  const ask = Number.parseFloat(askRaw);
 
-  let price = Number.parseFloat(String(priceRaw ?? 'NaN'));
+  let price = Number.parseFloat(priceRaw);
   if (!Number.isFinite(price)) {
     if (Number.isFinite(bid) && Number.isFinite(ask)) price = (bid + ask) / 2;
     else if (Number.isFinite(bid)) price = bid;
