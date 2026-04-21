@@ -27,7 +27,7 @@ export async function getPriceSnapshot(productId) {
 }
 
 /**
- * Fetch price snapshots for multiple products in one call.
+ * Fetch price snapshots for multiple products via one request per product.
  * Returns map: { productId → snapshot }
  */
 export async function getPriceSnapshots(productIds) {
@@ -36,45 +36,37 @@ export async function getPriceSnapshots(productIds) {
 }
 
 export async function getPriceSnapshotsWithDiagnostics(productIds) {
-  const ids = productIds.join(',');
-  const path = `/api/v3/brokerage/best_bid_ask?product_ids=${ids}`;
-  const { data, meta } = await cbFetch('GET', path, null, { withMeta: true });
-  const shapeKeys = Object.keys(data || {});
-  const pricebooks = _extractPricebooks(data);
-
   const snapshots = {};
   const diagnostics = {};
 
   for (const pid of productIds) {
-    const pb = pricebooks.find(p => (p.product_id || p.productId) === pid);
-    const parsed = _parseSnapshotFromPricebook(pb, pid);
-    if (parsed.snapshot) snapshots[pid] = parsed.snapshot;
-    diagnostics[pid] = {
-      endpoint: path,
-      productId: pid,
-      httpStatus: meta.status,
-      responseShapeKeys: shapeKeys,
-      missingReason: parsed.missingReason,
-    };
-  }
-
-  for (const pb of pricebooks) {
-    const pid = pb.product_id || pb.productId;
-    if (!pid || snapshots[pid]) continue;
-    const parsed = _parseSnapshotFromPricebook(pb, pid);
-    if (parsed.snapshot) {
-      snapshots[pid] = parsed.snapshot;
+    const path = `/api/v3/brokerage/best_bid_ask?product_ids=${encodeURIComponent(pid)}`;
+    try {
+      const { data, meta } = await cbFetch('GET', path, null, { withMeta: true });
+      const shapeKeys = Object.keys(data || {});
+      const pricebooks = _extractPricebooks(data);
+      const pb = pricebooks.find(p => (p.product_id || p.productId) === pid);
+      const parsed = _parseSnapshotFromPricebook(pb, pid);
+      if (parsed.snapshot) snapshots[pid] = parsed.snapshot;
       diagnostics[pid] = {
         endpoint: path,
         productId: pid,
         httpStatus: meta.status,
         responseShapeKeys: shapeKeys,
-        missingReason: null,
+        missingReason: parsed.missingReason,
+      };
+    } catch (err) {
+      diagnostics[pid] = {
+        endpoint: path,
+        productId: pid,
+        httpStatus: err?.status ?? null,
+        responseShapeKeys: Object.keys(err?.body || {}),
+        missingReason: `request_failed: ${err.message}`,
       };
     }
   }
 
-  return { snapshots, diagnostics, endpoint: path, status: meta.status, responseShapeKeys: shapeKeys };
+  return { snapshots, diagnostics };
 }
 
 /**
