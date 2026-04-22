@@ -345,6 +345,7 @@ export function getDashboardHTML() {
                 <div class="kv"><span class="k">USD (crypto)</span><span class="mono" id="bal-usd-real">$0.00</span></div>
                 <div class="kv"><span class="k">BTC (total)</span><span class="mono" id="bal-btc">0.000000</span></div>
                 <div class="kv"><span class="k">ETH (total)</span><span class="mono" id="bal-eth">0.000000</span></div>
+                <div class="kv"><span class="k">Crypto allocation</span><span class="mono" id="bal-alloc-crypto">USD 0% · BTC 0% · ETH 0%</span></div>
               </div>
               <div>
                 <div class="kv"><span class="k">Paper cash</span><span class="mono" id="bal-usd-paper">$0.00</span></div>
@@ -371,6 +372,12 @@ export function getDashboardHTML() {
             <table class="grid-table">
               <thead><tr><th>Type</th><th>Symbol</th><th>Side</th><th class="num">Price</th><th class="num">Size</th><th>Age</th></tr></thead>
               <tbody id="home-fills-body"></tbody>
+            </table>
+
+            <p class="section-title" style="margin-top:12px;">Trade Actions</p>
+            <table class="grid-table">
+              <thead><tr><th>Symbol</th><th>Action</th><th>Reason</th><th class="num">Notional</th><th>Age</th></tr></thead>
+              <tbody id="home-trade-actions-body"></tbody>
             </table>
 
             <p class="section-title" style="margin-top:12px;">PnL Summary</p>
@@ -622,6 +629,7 @@ export function getDashboardHTML() {
     cryptoDecisions: [],
     cryptoDecisionBySymbol: new Map(),
     fills: [],
+    tradeActions: [],
     watch: new Map(),
     prevPrices: new Map(),
     candles: new Map(),
@@ -655,6 +663,13 @@ export function getDashboardHTML() {
     const s = String(side || 'WAIT').toUpperCase();
     const c = s === 'BUY' ? 'badge-buy' : (s === 'SELL' ? 'badge-sell' : 'badge-wait');
     return '<span class="badge ' + c + '">' + s + '</span>';
+  }
+  function actionBadge(actionType) {
+    const t = String(actionType || 'fresh-buy').toLowerCase();
+    const cls = t === 'rotation' || t === 'trim'
+      ? 'badge-sell'
+      : (t === 'rebalance' ? 'badge-wait' : 'badge-buy');
+    return '<span class="badge ' + cls + '">' + t.toUpperCase() + '</span>';
   }
   function isValidSignal(signal) {
     return signal && typeof signal === 'object' && !Array.isArray(signal);
@@ -904,6 +919,15 @@ export function getDashboardHTML() {
     document.getElementById('bal-usd-real').textContent = usd(cryptoBalances.USD?.available || 0);
     document.getElementById('bal-btc').textContent = fmt(cryptoBalances.BTC?.total || 0, 6);
     document.getElementById('bal-eth').textContent = fmt(cryptoBalances.ETH?.total || 0, 6);
+    const btcPx = getSymbolPrice('BTC-USD');
+    const ethPx = getSymbolPrice('ETH-USD');
+    const usdBal = Number(cryptoBalances.USD?.available || 0);
+    const btcUsd = Number(cryptoBalances.BTC?.total || 0) * (Number.isFinite(btcPx) ? btcPx : 0);
+    const ethUsd = Number(cryptoBalances.ETH?.total || 0) * (Number.isFinite(ethPx) ? ethPx : 0);
+    const totalCrypto = usdBal + btcUsd + ethUsd;
+    const pct = function(v) { return totalCrypto > 0 ? Math.round((v / totalCrypto) * 100) : 0; };
+    document.getElementById('bal-alloc-crypto').textContent =
+      'USD ' + pct(usdBal) + '% · BTC ' + pct(btcUsd) + '% · ETH ' + pct(ethUsd) + '%';
     document.getElementById('bal-usd-paper').textContent = usd(stocks.paperCashUsd || 0);
     document.getElementById('bal-equity-paper').textContent = usd(stocks.paperEquityValueUsd || 0);
 
@@ -953,6 +977,16 @@ export function getDashboardHTML() {
       '</tr>';
     }).join('');
     document.getElementById('home-fills-body').innerHTML = fillRows || '<tr><td colspan="6" class="neutral">No recent fills</td></tr>';
+    const tradeActionRows = state.tradeActions.slice(0, 8).map(function(a) {
+      return '<tr>' +
+        '<td>' + (a.symbol || EMPTY_VALUE) + '</td>' +
+        '<td>' + actionBadge(a.type) + '</td>' +
+        '<td>' + (a.reason || EMPTY_VALUE) + '</td>' +
+        '<td class="num">' + usd(a.notionalUsd || 0) + '</td>' +
+        '<td>' + age(a.ts) + '</td>' +
+      '</tr>';
+    }).join('');
+    document.getElementById('home-trade-actions-body').innerHTML = tradeActionRows || '<tr><td colspan="5" class="neutral">No trade actions yet</td></tr>';
 
     const btcDecision = symbolDecision('BTC-USD');
     const ethDecision = symbolDecision('ETH-USD');
@@ -1379,6 +1413,7 @@ export function getDashboardHTML() {
       state.fills = cryptoFills.concat(stockFills).sort(function(a, b) {
         return new Date(b.filledAt || b.ts || 0).getTime() - new Date(a.filledAt || a.ts || 0).getTime();
       });
+      state.tradeActions = (dashboard.tradeActions || []).slice(0, 25);
 
       state.orders = (ordersResp.open || []).slice(0, 80);
 

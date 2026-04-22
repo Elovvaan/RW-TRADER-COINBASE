@@ -265,6 +265,7 @@ const routes = {
       const { cryptoPositions, stockPositions, all } = syncUnifiedPositionRegistry();
       const latestSignals = _agent ? _agent.getSignals() : [];
       const cryptoDecisions = _agent ? _agent.getCryptoDecisions() : [];
+      const tradeActions = unifiedExecutionRouter.getRecentTradeActions(25);
       const unrealizedCryptoPnl = cryptoPositions.reduce((sum, position) => sum + Number(position.unrealizedPnL || 0), 0);
       const unrealizedStockPnl = stockPositions.reduce((sum, position) => sum + Number(position.unrealizedPnL || 0), 0);
 
@@ -296,6 +297,7 @@ const routes = {
         },
         signals: latestSignals,
         cryptoDecisions,
+        tradeActions,
         positions: {
           realCrypto: cryptoPositions,
           paperStocks: stockPositions,

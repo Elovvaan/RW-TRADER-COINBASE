@@ -25,6 +25,9 @@ export async function evaluateAndExecute(signal, snapshot, priceMap, options = {
   const cooldownAfterStopMs = Number(signal?.indicators?.cooldownAfterStopMs);
   const quoteSizeOverride = Number(options?.quoteSizeOverride);
   const manualOverride = Boolean(options?.executionContext?.manualOverride);
+  const allowScaleIn = Boolean(options?.executionContext?.allowScaleIn);
+  const isExistingPosition = portfolio.hasPosition(productId);
+  const tradeIntent = isExistingPosition ? 'scale-in' : 'fresh-buy';
 
   // ── 1. Portfolio value for sizing ─────────────────────────────────────────
   let balances, portfolioUSD;
@@ -53,6 +56,7 @@ export async function evaluateAndExecute(signal, snapshot, priceMap, options = {
     proposedQuote: quoteSize,
     portfolioUSD,
     cooldownAfterStopMs: Number.isFinite(cooldownAfterStopMs) ? cooldownAfterStopMs : undefined,
+    allowExistingPosition: allowScaleIn,
   });
   if (!risk.approved) {
     return { executed: false, reason: risk.reason, details: risk.details };
@@ -108,20 +112,45 @@ export async function evaluateAndExecute(signal, snapshot, priceMap, options = {
 
   // ── 7. Record position ────────────────────────────────────────────────────
   if (!result.dryRun) {
-    portfolio.openPosition({
-      productId,
-      side:      'BUY',
-      entryPrice,
-      quoteSpent: quoteSize,
-      baseSize:   quoteSize / entryPrice,
-      tpPrice,
-      slPrice,
-      trailingStopPrice: null,
-      orderId:   result.orderId,
-    });
+    if (isExistingPosition && allowScaleIn) {
+      const pos = portfolio.getPosition(productId);
+      const addBase = quoteSize / entryPrice;
+      const newBaseSize = Number(pos.baseSize) + addBase;
+      const weightedEntry = ((Number(pos.baseSize) * Number(pos.entryPrice)) + (addBase * entryPrice)) / newBaseSize;
+      pos.baseSize = newBaseSize;
+      pos.quoteSpent = Number(pos.quoteSpent || 0) + quoteSize;
+      pos.entryPrice = weightedEntry;
+      pos.tpPrice = tpPrice;
+      pos.slPrice = slPrice;
+      pos.lastScaleInAt = Date.now();
+      log.info('SCALE_IN_DECISION', {
+        productId,
+        addQuoteSize: quoteSize,
+        newBaseSize,
+        weightedEntry,
+        reason: signal.reason || 'SIGNAL_CONFIRMED',
+      });
+    } else {
+      portfolio.openPosition({
+        productId,
+        side:      'BUY',
+        entryPrice,
+        quoteSpent: quoteSize,
+        baseSize:   quoteSize / entryPrice,
+        tpPrice,
+        slPrice,
+        trailingStopPrice: null,
+        orderId:   result.orderId,
+      });
+      log.info('SCALE_IN_DECISION', {
+        productId,
+        addQuoteSize: quoteSize,
+        decision: 'FRESH_ENTRY',
+      });
+    }
   }
 
-  return { executed: true, result, signal, preview, positionOpened: !result.dryRun };
+  return { executed: true, result, signal, preview, positionOpened: !result.dryRun, tradeIntent };
 }
 
 // ── Exit execution ────────────────────────────────────────────────────────────

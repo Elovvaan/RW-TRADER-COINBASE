@@ -31,6 +31,7 @@ export class UnifiedExecutionRouter {
       crypto: coinbaseAdapter,
       equities: stockAdapter,
     };
+    this.tradeActions = [];
   }
 
   async route({ signal, snapshot, priceMap, executionContext = {} }) {
@@ -110,7 +111,7 @@ export class UnifiedExecutionRouter {
       ? portfolio.hasRecentEntry(signal.symbol, duplicateWindowMs)
       : false;
 
-    if ((hasExistingPosition || hasRecentDuplicate) && !pyramidingAllowed) {
+    if ((hasRecentDuplicate || (hasExistingPosition && !pyramidingAllowed)) && !Boolean(executionContext.allowScaleIn)) {
       log.info('DUPLICATE_ENTRY_BLOCKED', {
         market: signal.market,
         symbol: signal.symbol,
@@ -122,6 +123,13 @@ export class UnifiedExecutionRouter {
           : 0,
       });
       return { executed: false, reason: 'DUPLICATE_ENTRY_BLOCKED' };
+    }
+    if (hasExistingPosition && signal.market === 'crypto') {
+      log.info('SCALE_IN_DECISION', {
+        symbol: signal.symbol,
+        decision: pyramidingAllowed || Boolean(executionContext.allowScaleIn) ? 'ALLOW' : 'BLOCK',
+        pyramidingAllowed,
+      });
     }
     log.info('POSITION_ADD_ALLOWED', {
       market: signal.market,
@@ -165,6 +173,7 @@ export class UnifiedExecutionRouter {
         priceMap,
         balances: coinbaseBalances,
         reason: allocation.reason,
+        executionContext,
       });
       if (rotated) {
         const balancesAfterRotation = await coinbaseAdapter.getBalances().catch(() => coinbaseBalances);
@@ -192,7 +201,28 @@ export class UnifiedExecutionRouter {
     }
 
     if (signal.market === 'crypto') {
-      return adapter.executeSignal({ signal, snapshot, priceMap, allocation, executionContext });
+      const result = await adapter.executeSignal({
+        signal,
+        snapshot,
+        priceMap,
+        allocation,
+        executionContext: {
+          ...executionContext,
+          allowScaleIn: hasExistingPosition && (pyramidingAllowed || Boolean(executionContext.allowScaleIn)),
+        },
+      });
+      const tradeType = hasExistingPosition ? 'scale-in' : 'fresh-buy';
+      if (result?.executed) {
+        this._pushTradeAction({
+          ts: Date.now(),
+          symbol: signal.symbol,
+          side: signal.side,
+          type: tradeType,
+          notionalUsd: allocation.notionalUsd,
+          reason: signal.reason || 'SIGNAL_EXECUTED',
+        });
+      }
+      return result;
     }
 
     if (config.authority === 'ASSIST') {
@@ -218,28 +248,67 @@ export class UnifiedExecutionRouter {
     return reason === 'NO_ALLOCATABLE_CAPITAL' || reason === 'NO_VALID_ORDER_NOTIONAL';
   }
 
-  async _attemptRotation({ signal, priceMap, balances, reason }) {
+  _pushTradeAction(action) {
+    this.tradeActions.unshift(action);
+    this.tradeActions = this.tradeActions.slice(0, 100);
+  }
+
+  getRecentTradeActions(limit = 25) {
+    return this.tradeActions.slice(0, Math.max(1, limit));
+  }
+
+  async _attemptRotation({ signal, priceMap, balances, reason, executionContext = {} }) {
     const candidates = portfolio.getAllPositions()
       .filter((position) => position.productId !== signal.symbol)
       .sort((a, b) => Number(b.unrealizedPnlUsd || 0) - Number(a.unrealizedPnlUsd || 0));
     if (!candidates.length) return false;
 
     const rotationTarget = candidates[candidates.length - 1];
+    const incomingConfidence = Number(signal.confidence || 0);
+    const rotationConfidenceFloor = Number(executionContext.rotationConfidenceFloor || 0.55);
+    if (!Number.isFinite(incomingConfidence) || incomingConfidence < rotationConfidenceFloor) {
+      log.info('ROTATION_DECISION', {
+        symbol: signal.symbol,
+        fromSymbol: rotationTarget.productId,
+        reason: 'INCOMING_SIGNAL_NOT_STRONG_ENOUGH',
+        incomingConfidence,
+        rotationConfidenceFloor,
+      });
+      return false;
+    }
+    const trimPct = Math.max(0.2, Math.min(1, Number(executionContext.rotationTrimPct || 0.5)));
+    const originalBaseSize = Number(rotationTarget.baseSize);
+    const trimBaseSize = originalBaseSize * trimPct;
     log.info('ROTATION_DECISION', {
       symbol: signal.symbol,
       fromSymbol: rotationTarget.productId,
       reason,
+      trimPct,
+      incomingConfidence,
     });
     try {
+      log.info('EXIT_TO_REALLOCATE', {
+        symbol: signal.symbol,
+        fromSymbol: rotationTarget.productId,
+        reason,
+        trimPct,
+      });
       const result = await createOrder({
         productId: rotationTarget.productId,
         side: 'SELL',
-        baseSize: Number(rotationTarget.baseSize).toFixed(8),
+        baseSize: trimBaseSize.toFixed(8),
       });
       if (!result?.dryRun) {
         const markPrice = Number(priceMap?.[rotationTarget.productId] || rotationTarget.currentPrice || rotationTarget.entryPrice);
         if (Number.isFinite(markPrice) && markPrice > 0) {
-          portfolio.closePosition(rotationTarget.productId, markPrice, 'rotation');
+          if (trimPct >= 0.999) {
+            portfolio.closePosition(rotationTarget.productId, markPrice, 'rotation');
+          } else {
+            const remainingBase = originalBaseSize - trimBaseSize;
+            const remainingRatio = remainingBase / Math.max(1e-12, originalBaseSize);
+            rotationTarget.baseSize = Math.max(0, remainingBase);
+            rotationTarget.quoteSpent = Number(rotationTarget.quoteSpent || 0) * Math.max(0, Math.min(1, remainingRatio));
+          }
         }
       }
       log.info('ROTATION_EXECUTED', {
@@ -247,6 +316,14 @@ export class UnifiedExecutionRouter {
         fromSymbol: rotationTarget.productId,
         orderId: result?.orderId || null,
         dryRun: Boolean(result?.dryRun),
+      });
+      this._pushTradeAction({
+        ts: Date.now(),
+        symbol: rotationTarget.productId,
+        side: 'SELL',
+        type: trimPct >= 0.999 ? 'rotation' : 'trim',
+        notionalUsd: Number(priceMap?.[rotationTarget.productId] || 0) * trimBaseSize,
+        reason: 'EXIT_TO_REALLOCATE',
       });
       return true;
     } catch (error) {
