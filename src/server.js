@@ -7,12 +7,13 @@ import config from '../config/index.js';
 import log from './logging/index.js';
 import { getBalances } from './accounts/index.js';
 import { listProducts, getPriceSnapshots } from './products/index.js';
-import { listOpenOrders, listFills, cancelAllOpenOrders } from './orders/index.js';
+import { listOpenOrders, listFills, cancelAllOpenOrders, createOrder } from './orders/index.js';
 import { setKillSwitch, getKillSwitch } from './risk/index.js';
 import portfolio from './portfolio/index.js';
 import stockAdapter from './brokers/stock-adapter.js';
 import coinbaseAdapter from './brokers/coinbase-adapter.js';
 import unifiedPositionRegistry from './unified/position-registry.js';
+import unifiedExecutionRouter from './unified/execution-router.js';
 
 // Set by index.js after agent starts
 let _agent = null;
@@ -82,6 +83,7 @@ function getControlState() {
     strategyMode: config.strategyMode,
     authority: config.authority,
     globalKillSwitch: getKillSwitch(),
+    maxCryptoOpenPositions: config.dayTrade.maxOpenPositions,
   };
 }
 
@@ -323,6 +325,100 @@ const routes = {
       json(res, 200, nextState);
     } catch (err) {
       json(res, 400, { error: err.message });
+    }
+  },
+
+  'POST /manual/override': async (req, res) => {
+    const body = await readBody(req);
+    const side = String(body.side || '').toUpperCase();
+    const symbol = String(body.symbol || '').toUpperCase();
+    const notionalUsd = Number(body.notionalUsd);
+    const now = Date.now();
+    log.info('MANUAL_OVERRIDE_CLICKED', { side, symbol, notionalUsd, ts: new Date(now).toISOString() });
+
+    if (config.authority === 'OFF') {
+      log.warn('MANUAL_OVERRIDE_REJECTED', { side, symbol, reason: 'AUTHORITY_OFF' });
+      return json(res, 403, { ok: false, reason: 'AUTHORITY_OFF', message: 'Authority OFF blocks manual override.' });
+    }
+    if (getKillSwitch()) {
+      log.warn('MANUAL_OVERRIDE_REJECTED', { side, symbol, reason: 'KILL_SWITCH_ACTIVE' });
+      return json(res, 403, { ok: false, reason: 'KILL_SWITCH_ACTIVE', message: 'Global kill switch is armed.' });
+    }
+    if (!config.tradingPairs.includes(symbol)) {
+      log.warn('MANUAL_OVERRIDE_REJECTED', { side, symbol, reason: 'UNSUPPORTED_SYMBOL' });
+      return json(res, 400, { ok: false, reason: 'UNSUPPORTED_SYMBOL', message: `Symbol ${symbol} is not an enabled crypto pair.` });
+    }
+
+    try {
+      if (side === 'BUY') {
+        if (!Number.isFinite(notionalUsd) || notionalUsd <= 0) {
+          log.warn('MANUAL_OVERRIDE_REJECTED', { side, symbol, reason: 'INVALID_NOTIONAL_USD', notionalUsd });
+          return json(res, 400, { ok: false, reason: 'INVALID_NOTIONAL_USD', message: 'Manual buy size (USD) must be greater than zero.' });
+        }
+        const snap = _agent?.feed?.getSnapshot(symbol);
+        if (!snap?.price) {
+          log.warn('MANUAL_OVERRIDE_REJECTED', { side, symbol, reason: 'NO_LIVE_PRICE' });
+          return json(res, 400, { ok: false, reason: 'NO_LIVE_PRICE', message: `No live price available for ${symbol}.` });
+        }
+        const priceMap = _agent?._buildPriceMap?.() || { [symbol]: Number(snap.price) };
+        const execution = await unifiedExecutionRouter.route({
+          signal: {
+            market: 'crypto',
+            symbol,
+            side: 'BUY',
+            confidence: 1,
+            reason: 'MANUAL_OVERRIDE',
+            entry: Number(snap.price),
+            tp: Number(snap.price) * (1 + config.dayTrade.takeProfitPct),
+            sl: Number(snap.price) * (1 - config.dayTrade.stopLossPct),
+            ts: now,
+            indicators: { strategyMode: config.strategyMode, manualOverride: true },
+            riskPct: 0.01,
+          },
+          snapshot: snap,
+          priceMap,
+          executionContext: {
+            manualOverride: true,
+            manualNotionalUsd: notionalUsd,
+            maxOpenPositions: config.dayTrade.maxOpenPositions,
+          },
+        });
+        if (!execution?.executed) {
+          log.warn('MANUAL_OVERRIDE_REJECTED', { side, symbol, reason: execution?.reason || 'EXECUTION_FAILED' });
+          return json(res, 400, { ok: false, reason: execution?.reason || 'EXECUTION_FAILED', details: execution?.details || null });
+        }
+        log.info('MANUAL_OVERRIDE_SUBMITTED', { side, symbol, notionalUsd, orderId: execution?.result?.orderId || null, dryRun: Boolean(execution?.result?.dryRun) });
+        if (execution?.positionOpened || execution?.result?.dryRun) {
+          log.info('MANUAL_OVERRIDE_FILLED', { side, symbol, orderId: execution?.result?.orderId || null, dryRun: Boolean(execution?.result?.dryRun) });
+        }
+        return json(res, 200, { ok: true, side, symbol, execution });
+      }
+
+      if (side === 'SELL' || side === 'CLOSE') {
+        const position = portfolio.getPosition(symbol);
+        if (!position) {
+          log.warn('MANUAL_OVERRIDE_REJECTED', { side, symbol, reason: 'NO_OPEN_POSITION' });
+          return json(res, 400, { ok: false, reason: 'NO_OPEN_POSITION', message: `No open position found for ${symbol}.` });
+        }
+        const result = await createOrder({
+          productId: symbol,
+          side: 'SELL',
+          baseSize: Number(position.baseSize).toFixed(8),
+        });
+        if (!result?.dryRun) {
+          const mark = Number(_agent?.feed?.getSnapshot(symbol)?.price || position.markPrice || position.entryPrice);
+          portfolio.closePosition(symbol, mark, 'manual_override');
+        }
+        log.info('MANUAL_OVERRIDE_SUBMITTED', { side, symbol, baseSize: position.baseSize, orderId: result?.orderId || null, dryRun: Boolean(result?.dryRun) });
+        log.info('MANUAL_OVERRIDE_FILLED', { side, symbol, orderId: result?.orderId || null, dryRun: Boolean(result?.dryRun) });
+        return json(res, 200, { ok: true, side, symbol, result });
+      }
+
+      log.warn('MANUAL_OVERRIDE_REJECTED', { side, symbol, reason: 'INVALID_SIDE' });
+      return json(res, 400, { ok: false, reason: 'INVALID_SIDE', message: 'Manual side must be BUY, SELL, or CLOSE.' });
+    } catch (error) {
+      log.error('MANUAL_OVERRIDE_REJECTED', { side, symbol, reason: 'EXCEPTION', error: error.message });
+      return json(res, 500, { ok: false, reason: 'MANUAL_OVERRIDE_EXCEPTION', message: error.message });
     }
   },
 

@@ -469,6 +469,9 @@ export function getDashboardHTML() {
             <div class="kv"><span class="k">Regime</span><span id="chart-detail-regime">—</span></div>
 
             <div class="control-grid" style="margin-top:10px;">
+              <label class="full subtle">Manual size (USD)
+                <input id="manual-size-usd" type="number" min="1" step="1" value="50" style="width:100%;margin-top:4px;background:#12203a;border:1px solid #36517d;color:var(--text);border-radius:7px;padding:6px 8px;font-size:12px;">
+              </label>
               <button id="manual-buy" class="btn-safe">Buy (manual override)</button>
               <button id="manual-sell" class="btn-danger">Sell (manual override)</button>
               <button id="manual-close" class="full">Close Position</button>
@@ -546,6 +549,7 @@ export function getDashboardHTML() {
               </select>
             </div>
             <div class="kv" style="margin-top:10px;"><span class="k">Indicator visibility</span><span id="indicator-status">ON</span></div>
+            <div class="kv"><span class="k">Max crypto positions</span><span id="control-max-positions">3</span></div>
             <div class="note" style="margin-top:8px;">Manual actions are available for override only; autonomous signal-routing remains the default operating mode.</div>
           </div>
         </div>
@@ -1180,12 +1184,14 @@ export function getDashboardHTML() {
   }
 
   function renderControlTab() {
+    const control = (state.dashboard && state.dashboard.controlPanel) || {};
     document.getElementById('auto-refresh-label').textContent = Math.round(state.refreshIntervalMs / 1000) + 's';
     document.getElementById('refresh-interval').value = String(state.refreshIntervalMs);
     document.getElementById('strategy-mode-select').value = state.strategyMode;
     document.getElementById('control-timeframe').textContent = state.timeframe;
     document.getElementById('control-timeframe-select').value = state.timeframe;
     document.getElementById('indicator-status').textContent = state.indicatorsOn ? 'ON' : 'OFF';
+    document.getElementById('control-max-positions').textContent = String(control.maxCryptoOpenPositions || 3);
   }
 
   async function setControl(patch) {
@@ -1202,6 +1208,35 @@ export function getDashboardHTML() {
       logLine('Control update failed: ' + (err && err.message ? err.message : String(err || 'unknown')));
     } finally {
       state.pendingControls = false;
+    }
+  }
+
+  async function submitManualOverride(side) {
+    const symbol = state.selectedSymbol;
+    const sizeInput = document.getElementById('manual-size-usd');
+    const notionalUsd = Number(sizeInput && sizeInput.value);
+    logLine('MANUAL_OVERRIDE_CLICKED ' + side + ' ' + symbol + ' size=' + (Number.isFinite(notionalUsd) ? notionalUsd : 'n/a'));
+    try {
+      const res = await fetch('/manual/override', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ side, symbol, notionalUsd }),
+      });
+      const payload = await res.json();
+      if (!res.ok || payload.ok === false) {
+        const reason = payload.reason || payload.message || ('HTTP_' + res.status);
+        document.getElementById('manual-note').textContent = 'Manual override rejected: ' + reason;
+        logLine('MANUAL_OVERRIDE_REJECTED ' + side + ' ' + symbol + ' reason=' + reason);
+        return;
+      }
+      document.getElementById('manual-note').textContent = 'Manual override submitted: ' + side + ' ' + symbol;
+      logLine('MANUAL_OVERRIDE_SUBMITTED ' + side + ' ' + symbol);
+      logLine('MANUAL_OVERRIDE_FILLED ' + side + ' ' + symbol);
+      await load();
+    } catch (err) {
+      const reason = err && err.message ? err.message : String(err || 'unknown');
+      document.getElementById('manual-note').textContent = 'Manual override rejected: ' + reason;
+      logLine('MANUAL_OVERRIDE_REJECTED ' + side + ' ' + symbol + ' reason=' + reason);
     }
   }
   function scheduleRefresh() {
@@ -1247,13 +1282,13 @@ export function getDashboardHTML() {
     });
 
     document.getElementById('manual-buy').addEventListener('click', function() {
-      logLine('Manual BUY requested for ' + state.selectedSymbol + ' (preview only; backend execution not wired here).');
+      submitManualOverride('BUY');
     });
     document.getElementById('manual-sell').addEventListener('click', function() {
-      logLine('Manual SELL requested for ' + state.selectedSymbol + ' (preview only; backend execution not wired here).');
+      submitManualOverride('SELL');
     });
     document.getElementById('manual-close').addEventListener('click', function() {
-      logLine('Manual CLOSE requested for ' + state.selectedSymbol + ' (preview only; backend execution not wired here).');
+      submitManualOverride('CLOSE');
     });
 
     document.getElementById('refresh-interval').addEventListener('change', function(e) {

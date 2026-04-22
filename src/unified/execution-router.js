@@ -5,6 +5,7 @@ import stockAdapter from '../brokers/stock-adapter.js';
 import portfolio from '../portfolio/index.js';
 import { allocateSignal } from './allocator.js';
 import { getKillSwitch } from '../risk/index.js';
+import { createOrder } from '../orders/index.js';
 
 function toCryptoUnifiedPositions() {
   return portfolio.getAllPositions().map((position) => ({
@@ -80,8 +81,13 @@ export class UnifiedExecutionRouter {
       const modeLimit = config.strategyMode === 'DAY_TRADE'
         ? effectiveMaxOpenPositions
         : config.tradingPairs.length;
+      log.info('MAX_POSITIONS_LIMIT=3', {
+        market: signal.market,
+        symbol: signal.symbol,
+        maxPositions: modeLimit,
+      });
       if (openCryptoPositions >= modeLimit) {
-        log.info('MAX_POSITIONS_BLOCKED', {
+        log.info('POSITION_OPEN_BLOCKED', {
           market: signal.market,
           symbol: signal.symbol,
           openPositions: openCryptoPositions,
@@ -89,6 +95,12 @@ export class UnifiedExecutionRouter {
         });
         return { executed: false, reason: 'MAX_POSITIONS_REACHED' };
       }
+      log.info('POSITION_OPEN_ALLOWED', {
+        market: signal.market,
+        symbol: signal.symbol,
+        openPositions: openCryptoPositions,
+        maxPositions: modeLimit,
+      });
     }
 
     const duplicateWindowMs = signal.market === 'crypto'
@@ -128,9 +140,11 @@ export class UnifiedExecutionRouter {
       ...stockAdapter.getOpenPositions(),
     ];
 
-    const proposedNotionalUsd = signal.market === 'crypto'
+    const proposedNotionalUsd = Number.isFinite(Number(executionContext.manualNotionalUsd))
+      ? Number(executionContext.manualNotionalUsd)
+      : (signal.market === 'crypto'
       ? await coinbaseAdapter.estimateEntryNotional({ priceMap }).catch(() => null)
-      : null;
+      : null);
 
     const allocation = await allocateSignal({
       signal,
@@ -142,8 +156,36 @@ export class UnifiedExecutionRouter {
       dailyLossUsd: portfolio.getDailyLoss() + stockAdapter.getDailyLossUsd(),
       adapter,
       proposedNotionalUsd,
-      executionContext,
+      executionContext: { ...executionContext, priceMap },
     });
+
+    if (!allocation.approved && signal.market === 'crypto' && this._canRotateFromBalances(allocation.reason)) {
+      const rotated = await this._attemptRotation({
+        signal,
+        priceMap,
+        balances: coinbaseBalances,
+        reason: allocation.reason,
+      });
+      if (rotated) {
+        const balancesAfterRotation = await coinbaseAdapter.getBalances().catch(() => coinbaseBalances);
+        const retryAllocation = await allocateSignal({
+          signal,
+          positions,
+          balancesByBroker: {
+            coinbase: balancesAfterRotation,
+            stocks: stockBalances,
+          },
+          dailyLossUsd: portfolio.getDailyLoss() + stockAdapter.getDailyLossUsd(),
+          adapter,
+          proposedNotionalUsd,
+          executionContext: { ...executionContext, priceMap },
+        });
+        if (retryAllocation.approved) {
+          return adapter.executeSignal({ signal, snapshot, priceMap, allocation: retryAllocation, executionContext });
+        }
+        return { executed: false, reason: retryAllocation.reason, details: retryAllocation.details || null };
+      }
+    }
 
     if (!allocation.approved) {
       return { executed: false, reason: allocation.reason, details: allocation.details || null };
@@ -170,6 +212,51 @@ export class UnifiedExecutionRouter {
     if (!condition) return null;
     log.info('EXECUTION_BLOCKED', { market, symbol, reason });
     return { executed: false, reason };
+  }
+
+  _canRotateFromBalances(reason) {
+    return reason === 'NO_ALLOCATABLE_CAPITAL' || reason === 'NO_VALID_ORDER_NOTIONAL';
+  }
+
+  async _attemptRotation({ signal, priceMap, balances, reason }) {
+    const candidates = portfolio.getAllPositions()
+      .filter((position) => position.productId !== signal.symbol)
+      .sort((a, b) => Number(b.unrealizedPnlUsd || 0) - Number(a.unrealizedPnlUsd || 0));
+    if (!candidates.length) return false;
+
+    const rotationTarget = candidates[candidates.length - 1];
+    log.info('ROTATION_DECISION', {
+      symbol: signal.symbol,
+      fromSymbol: rotationTarget.productId,
+      reason,
+    });
+    try {
+      const result = await createOrder({
+        productId: rotationTarget.productId,
+        side: 'SELL',
+        baseSize: Number(rotationTarget.baseSize).toFixed(8),
+      });
+      if (!result?.dryRun) {
+        const markPrice = Number(priceMap?.[rotationTarget.productId] || rotationTarget.currentPrice || rotationTarget.entryPrice);
+        if (Number.isFinite(markPrice) && markPrice > 0) {
+          portfolio.closePosition(rotationTarget.productId, markPrice, 'rotation');
+        }
+      }
+      log.info('ROTATION_EXECUTED', {
+        symbol: signal.symbol,
+        fromSymbol: rotationTarget.productId,
+        orderId: result?.orderId || null,
+        dryRun: Boolean(result?.dryRun),
+      });
+      return true;
+    } catch (error) {
+      log.warn('ROTATION_FAILED', {
+        symbol: signal.symbol,
+        fromSymbol: rotationTarget.productId,
+        error: error.message,
+      });
+      return false;
+    }
   }
 }
 

@@ -236,7 +236,7 @@ async function generateDayTradeSignal(productId, currentPrice, timeframe) {
       && nearTrend
       && confidence >= config.dayTrade.minConfidence;
     const fallbackEntry = confidence >= config.dayTrade.fallbackMinConfidence
-      && (shortTermMomentum || microTrendDetected);
+      && (shortTermMomentum || microTrendDetected || nearTrend || pullbackRsi);
     if (!primaryEntry && regime !== 'BULL' && !fallbackEntry) {
       return _waitSignal(productId, 'REGIME_BLOCKED', currentPrice, indicators);
     }

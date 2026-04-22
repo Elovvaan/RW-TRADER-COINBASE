@@ -15,9 +15,9 @@ import { portfolioValueUSD } from './accounts/index.js';
 
 const EXIT_CHECK_INTERVAL_MS = 60 * 1000; // Check exits every 60s
 // Additional confidence-threshold relaxation applied after prolonged inactivity.
-const INACTIVITY_THRESHOLD_BOOST = 0.02;
+const INACTIVITY_THRESHOLD_BOOST = 0.05;
 // Per-trade shortfall multiplier used to relax day-trade confidence threshold.
-const SHORTFALL_RELAXATION_FACTOR = 0.03;
+const SHORTFALL_RELAXATION_FACTOR = 0.05;
 
 export class TradingAgent {
   constructor() {
@@ -258,7 +258,7 @@ export class TradingAgent {
   _calculateMaxPositionsForEquity(totalEquityUsd, smallAccountMode) {
     if (!smallAccountMode) return config.dayTrade.maxOpenPositions;
     if (totalEquityUsd <= config.smallAccount.lowEquitySinglePositionUsd) return 1;
-    return Math.max(1, Math.min(2, config.smallAccount.maxOpenPositions));
+    return Math.max(1, Math.min(3, config.smallAccount.maxOpenPositions));
   }
 
   _effectiveDayTradeThreshold() {
