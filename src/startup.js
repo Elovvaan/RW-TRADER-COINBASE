@@ -9,6 +9,7 @@ import { listProducts, getPriceSnapshotsWithDiagnostics } from './products/index
 import { cbFetch } from './rest.js';
 import config from '../config/index.js';
 import log from './logging/index.js';
+import { getAutonomyStatus } from './autonomy.js';
 
 export async function runStartupValidation() {
   const errors = [];
@@ -34,6 +35,12 @@ export async function runStartupValidation() {
 
   if (config.killSwitch) {
     warnings.push('KILL_SWITCH=true — all trading halted at startup.');
+  }
+
+  const autonomy = getAutonomyStatus({ includeRuntimeKillSwitch: false });
+  if (!autonomy.autonomousTradingReady) {
+    log.warn('STARTUP_AUTONOMY_BLOCKERS', { blockers: autonomy.blockers });
+    warnings.push(`Autonomous trading blocked: ${autonomy.blockers.join('; ')}`);
   }
 
   // ── 2. Credential validation ───────────────────────────────────────────────
