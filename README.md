@@ -1,8 +1,11 @@
 # rw-trader-cb
 
-Production-grade spot crypto swing-trading agent for **Coinbase Advanced Trade API v3**.
+Production-grade RW-Trader with one trading brain and two broker adapters:
+- **Coinbase Advanced Trade API v3** for crypto
+- **Stock broker execution layer** for equities (starter symbols: `AAPL,NVDA,TSLA,SPY`)
 
-- Spot only — no futures, margin, or leverage
+- Unified execution router (`crypto -> Coinbase`, `equities -> stock broker`)
+- Spot crypto + equities routing (custody remains broker-separated)
 - WebSocket market feed with automatic REST fallback
 - Multi-gate risk engine runs before every order
 - Dry-run by default; live execution requires explicit opt-in
@@ -22,8 +25,16 @@ rw-trader-cb/
 ├── scripts/
 │   ├── setup.sh              # Install deps, copy .env
 │   └── test-api.sh           # Smoke-test all REST endpoints
-└── src/
-    ├── index.js              # Entry point + graceful shutdown
+    └── src/
+        ├── brokers/
+        │   ├── coinbase-adapter.js
+        │   └── stock-adapter.js
+        ├── unified/
+        │   ├── allocator.js
+        │   ├── execution-router.js
+        │   ├── position-registry.js
+        │   └── signals.js
+        ├── index.js              # Entry point + graceful shutdown
     ├── startup.js            # Startup validation (credentials, perms, prices)
     ├── agent.js              # Main trading loop (signal → risk → execute)
     ├── rest.js               # Authenticated REST client
@@ -88,6 +99,10 @@ This confirms (when credentials are provided):
 DRY_RUN=true AUTHORITY=ASSIST npm start
 ```
 
+Default feature flags:
+- `ENABLE_CRYPTO=true`
+- `ENABLE_EQUITIES=true`
+
 If Coinbase credentials are not set, the API server still starts and `/health` reports `status: "degraded"` with a credentials message.
 
 The server binds to `HOST` (default `0.0.0.0`) and `PORT` (default `3000`) for container deployment platforms like Railway.
@@ -118,6 +133,7 @@ DRY_RUN=false AUTHORITY=AUTO npm start
 | GET | `/signals` | Latest signal per pair |
 | GET | `/orders` | Open orders + recent fills |
 | GET | `/positions` | Open positions + daily P&L |
+| GET | `/unified/dashboard` | Unified status, split balances/positions, latest signals, fills, total portfolio PnL |
 | GET/POST | `/kill-switch` | Read or toggle kill switch |
 | GET/POST | `/mode` | Read or set authority mode |
 | DELETE | `/orders` | Cancel all open orders |

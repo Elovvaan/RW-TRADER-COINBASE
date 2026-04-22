@@ -21,23 +21,31 @@ async function main() {
   });
 
   let agent = null;
+  const cryptoEnabled = config.enableCrypto;
+  const equitiesEnabled = config.enableEquities;
 
-  if (config.hasCoinbaseCredentials) {
-    const ok = await runStartupValidation();
-    if (!ok) {
-      log.warn('STARTUP_DEGRADED', {
-        reason: 'Startup validation failed. Trading agent disabled; API/health endpoints remain available.',
-      });
-      return;
+  if (cryptoEnabled && !config.hasCoinbaseCredentials) {
+    log.warn('STARTUP_DEGRADED', {
+      reason: equitiesEnabled
+        ? 'Coinbase credentials missing. Crypto execution disabled; equities execution remains available.'
+        : 'Coinbase credentials missing. Agent disabled; API/health endpoints remain available.',
+    });
+  }
+
+  if (!cryptoEnabled || config.hasCoinbaseCredentials || equitiesEnabled) {
+    if (cryptoEnabled && config.hasCoinbaseCredentials) {
+      const ok = await runStartupValidation();
+      if (!ok) {
+        log.warn('STARTUP_DEGRADED', {
+          reason: 'Startup validation failed. Trading agent disabled; API/health endpoints remain available.',
+        });
+        if (!equitiesEnabled) return;
+      }
     }
 
     agent = new TradingAgent();
     attachAgent(agent);
     await agent.start();
-  } else {
-    log.warn('STARTUP_DEGRADED', {
-      reason: 'Coinbase credentials missing. Agent disabled; API/health endpoints remain available.',
-    });
   }
 
   // Graceful shutdown

@@ -37,6 +37,13 @@ function parseBool(key, fallback) {
   throw new Error(`[CONFIG] ${key} must be "true" or "false", got: "${v}"`);
 }
 
+function parseCsv(key, fallback) {
+  return optionalEnv(key, fallback)
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 export const config = {
   // Coinbase credentials
   cbApiKeyName: optionalEnv('CB_API_KEY_NAME', ''),
@@ -47,10 +54,12 @@ export const config = {
   authority: optionalEnv('AUTHORITY', 'ASSIST'), // OFF | ASSIST | AUTO
   scanIntervalMs: parseInt_('SCAN_INTERVAL_MS', 60000),
   signalConfidenceThreshold: parseFloat_('SIGNAL_CONFIDENCE_THRESHOLD', 0),
+  enableCrypto: parseBool('ENABLE_CRYPTO', true),
+  enableEquities: parseBool('ENABLE_EQUITIES', true),
 
   // Trading universe
-  tradingPairs: optionalEnv('TRADING_PAIRS', 'BTC-USD,ETH-USD,SOL-USD')
-    .split(',').map(p => p.trim()).filter(Boolean),
+  tradingPairs: parseCsv('TRADING_PAIRS', 'BTC-USD,ETH-USD,SOL-USD'),
+  stockSymbols: parseCsv('STOCK_SYMBOLS', 'AAPL,NVDA,TSLA,SPY'),
 
   // Risk
   risk: {
@@ -76,6 +85,28 @@ export const config = {
   // Coinbase API base
   cbRestBase: 'https://api.coinbase.com',
   cbWsUrl:    'wss://advanced-trade-ws.coinbase.com',
+
+  // Unified portfolio allocator
+  allocator: {
+    maxTotalDailyLossUsd: parseFloat_('MAX_TOTAL_DAILY_LOSS_USD', 150),
+    maxCryptoAllocation: parseFloat_('MAX_CRYPTO_ALLOCATION', 1),
+    maxEquitiesAllocation: parseFloat_('MAX_EQUITIES_ALLOCATION', 0.4),
+    perPositionMaxRisk: parseFloat_('PER_POSITION_MAX_RISK', 0.02),
+    targetNotionalPct: parseFloat_('TARGET_NOTIONAL_PCT', 0.1),
+  },
+
+  // Stock broker adapter
+  stockBroker: {
+    name: optionalEnv('STOCK_BROKER_NAME', 'paper-stock'),
+    minOrderUsd: parseFloat_('STOCK_MIN_ORDER_USD', 1),
+    startingCashUsd: parseFloat_('STOCK_STARTING_CASH_USD', 100000),
+    priceAnchors: {
+      AAPL: parseFloat_('STOCK_ANCHOR_AAPL', 180),
+      NVDA: parseFloat_('STOCK_ANCHOR_NVDA', 900),
+      TSLA: parseFloat_('STOCK_ANCHOR_TSLA', 180),
+      SPY: parseFloat_('STOCK_ANCHOR_SPY', 500),
+    },
+  },
 };
 
 config.hasCoinbaseCredentials = Boolean(config.cbApiKeyName && config.cbApiPrivateKey);
@@ -91,6 +122,22 @@ if (config.scanIntervalMs <= 0) {
 
 if (config.signalConfidenceThreshold < 0 || config.signalConfidenceThreshold > 1) {
   throw new Error(`[CONFIG] SIGNAL_CONFIDENCE_THRESHOLD must be between 0 and 1. Got: "${config.signalConfidenceThreshold}"`);
+}
+
+if (!config.enableCrypto && !config.enableEquities) {
+  throw new Error('[CONFIG] At least one market must be enabled (ENABLE_CRYPTO or ENABLE_EQUITIES).');
+}
+
+if (config.allocator.maxCryptoAllocation < 0 || config.allocator.maxCryptoAllocation > 1) {
+  throw new Error(`[CONFIG] MAX_CRYPTO_ALLOCATION must be between 0 and 1. Got: "${config.allocator.maxCryptoAllocation}"`);
+}
+
+if (config.allocator.maxEquitiesAllocation < 0 || config.allocator.maxEquitiesAllocation > 1) {
+  throw new Error(`[CONFIG] MAX_EQUITIES_ALLOCATION must be between 0 and 1. Got: "${config.allocator.maxEquitiesAllocation}"`);
+}
+
+if (config.allocator.perPositionMaxRisk <= 0 || config.allocator.perPositionMaxRisk > 1) {
+  throw new Error(`[CONFIG] PER_POSITION_MAX_RISK must be > 0 and <= 1. Got: "${config.allocator.perPositionMaxRisk}"`);
 }
 
 // Safety: AUTO only allowed when DRY_RUN is explicitly false

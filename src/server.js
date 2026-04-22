@@ -10,11 +10,65 @@ import { listProducts, getPriceSnapshots } from './products/index.js';
 import { listOpenOrders, listFills, cancelAllOpenOrders } from './orders/index.js';
 import { setKillSwitch, getKillSwitch } from './risk/index.js';
 import portfolio from './portfolio/index.js';
+import stockAdapter from './brokers/stock-adapter.js';
+import coinbaseAdapter from './brokers/coinbase-adapter.js';
+import unifiedPositionRegistry from './unified/position-registry.js';
 
 // Set by index.js after agent starts
 let _agent = null;
 let _lastUiRefreshTickLogAt = 0;
 export function attachAgent(agent) { _agent = agent; }
+
+function getCryptoPositions() {
+  const now = Date.now();
+  const latestSignals = _agent ? _agent.getSignals().filter((signal) => signal.market === 'crypto') : [];
+  const signalTsByProduct = new Map(
+    latestSignals
+      .map((signal) => [signal.symbol, signal.ts])
+      .filter(([pid]) => Boolean(pid))
+  );
+
+  return (portfolio.getAllPositions() || []).map((p) => {
+    const snap = _agent?.feed?.getSnapshot?.(p.productId) ?? null;
+    const fallbackPrice = Number.isFinite(snap?.price) ? snap.price : null;
+    const markPrice = Number.isFinite(p.markPrice) ? p.markPrice : fallbackPrice;
+    const marketTs = Number.isFinite(p.lastMarketUpdateTs) ? p.lastMarketUpdateTs : (Number.isFinite(snap?.ts) ? snap.ts : null);
+    const unrealizedPnlUsd = Number.isFinite(p.unrealizedPnlUsd)
+      ? p.unrealizedPnlUsd
+      : ((Number.isFinite(markPrice) && Number.isFinite(p.entryPrice) && Number.isFinite(p.baseSize))
+          ? ((p.side === 'SELL' ? (p.entryPrice - markPrice) : (markPrice - p.entryPrice)) * p.baseSize)
+          : null);
+
+    return {
+      broker: 'coinbase',
+      symbol: p.productId,
+      market: 'crypto',
+      size: p.baseSize,
+      entry: p.entryPrice,
+      currentPrice: markPrice,
+      unrealizedPnL: unrealizedPnlUsd,
+      tp: p.tpPrice,
+      sl: p.slPrice,
+      openedAt: p.openedAt,
+      signalTs: signalTsByProduct.get(p.productId) ?? null,
+      marketTs,
+      positionAgeMs: Number.isFinite(p.openedAt) ? Math.max(0, now - p.openedAt) : null,
+      lastMarketUpdateAgeMs: Number.isFinite(marketTs) ? Math.max(0, now - marketTs) : null,
+      productId: p.productId,
+      markPrice,
+      lastPrice: Number.isFinite(p.lastPrice) ? p.lastPrice : markPrice,
+      unrealizedPnlUsd,
+    };
+  });
+}
+
+function syncUnifiedPositionRegistry() {
+  const cryptoPositions = getCryptoPositions();
+  const stockPositions = stockAdapter.getOpenPositions();
+  unifiedPositionRegistry.syncPositions(cryptoPositions, 'coinbase');
+  unifiedPositionRegistry.syncPositions(stockPositions, stockAdapter.broker);
+  return { cryptoPositions, stockPositions, all: unifiedPositionRegistry.list() };
+}
 
 function json(res, status, data) {
   const body = JSON.stringify(data, null, 2);
@@ -46,13 +100,21 @@ const routes = {
     const hasCredentials = config.hasCoinbaseCredentials;
     const agentRunning = Boolean(_agent);
     json(res, 200, {
-      status: hasCredentials && agentRunning ? 'ok' : 'degraded',
+      status: agentRunning ? 'ok' : 'degraded',
       ts: new Date().toISOString(),
       dryRun: config.dryRun,
       authority: config.authority,
       killSwitch: getKillSwitch(),
       pairs: config.tradingPairs,
       wsConnected: _agent?.feed?.connected ?? false,
+      features: {
+        enableCrypto: config.enableCrypto,
+        enableEquities: config.enableEquities,
+      },
+      equities: {
+        broker: stockAdapter.broker,
+        symbols: config.stockSymbols,
+      },
       credentials: {
         configured: hasCredentials,
         message: !hasCredentials
@@ -103,38 +165,10 @@ const routes = {
   },
 
   'GET /positions': async (_req, res) => {
-    const state = portfolio.snapshot();
     const now = Date.now();
-    const latestSignals = _agent ? _agent.getSignals() : [];
-    const signalTsByProduct = new Map(
-      latestSignals.map(s => [s.productId, s.ts]).filter(([pid]) => Boolean(pid))
-    );
-
-    const positions = (state.positions || []).map((p) => {
-      const snap = _agent?.feed?.getSnapshot?.(p.productId) ?? null;
-      const fallbackPrice = Number.isFinite(snap?.price) ? snap.price : null;
-      const markPrice = Number.isFinite(p.markPrice) ? p.markPrice : fallbackPrice;
-      const lastPrice = Number.isFinite(p.lastPrice) ? p.lastPrice : fallbackPrice;
-      const marketTs = Number.isFinite(p.lastMarketUpdateTs) ? p.lastMarketUpdateTs : (Number.isFinite(snap?.ts) ? snap.ts : null);
-      const unrealizedPnlUsd = Number.isFinite(p.unrealizedPnlUsd)
-        ? p.unrealizedPnlUsd
-        : ((Number.isFinite(markPrice) && Number.isFinite(p.entryPrice) && Number.isFinite(p.baseSize))
-            ? ((p.side === 'SELL'
-                ? (p.entryPrice - markPrice)
-                : (markPrice - p.entryPrice)) * p.baseSize)
-            : null);
-
-      return {
-        ...p,
-        markPrice,
-        lastPrice,
-        unrealizedPnlUsd,
-        signalTs: signalTsByProduct.get(p.productId) ?? null,
-        marketTs,
-        positionAgeMs: Number.isFinite(p.openedAt) ? Math.max(0, now - p.openedAt) : null,
-        lastMarketUpdateAgeMs: Number.isFinite(marketTs) ? Math.max(0, now - marketTs) : null,
-      };
-    });
+    const state = portfolio.snapshot();
+    const { cryptoPositions } = syncUnifiedPositionRegistry();
+    const positions = cryptoPositions;
 
     if (now - _lastUiRefreshTickLogAt >= 15000) {
       _lastUiRefreshTickLogAt = now;
@@ -152,6 +186,50 @@ const routes = {
       wsConnected: _agent?.feed?.connected ?? false,
       ts: new Date(now).toISOString(),
     });
+  },
+
+  'GET /unified/dashboard': async (_req, res) => {
+    try {
+      const [cryptoBalances, stockBalances, coinbaseFills, stockFills] = await Promise.all([
+        config.enableCrypto ? getBalances() : {},
+        config.enableEquities ? stockAdapter.getBalances() : {},
+        config.enableCrypto ? coinbaseAdapter.getRecentFills(20) : [],
+        config.enableEquities ? stockAdapter.getRecentFills(20) : [],
+      ]);
+
+      const { cryptoPositions, stockPositions, all } = syncUnifiedPositionRegistry();
+      const latestSignals = _agent ? _agent.getSignals() : [];
+      const recentFills = [...stockFills, ...coinbaseFills]
+        .sort((a, b) => new Date(b.filledAt || 0).getTime() - new Date(a.filledAt || 0).getTime())
+        .slice(0, 40);
+
+      const totalPortfolioPnl = all.reduce((sum, position) => sum + Number(position.unrealizedPnL || 0), 0);
+
+      json(res, 200, {
+        system: {
+          ts: new Date().toISOString(),
+          authority: config.authority,
+          dryRun: config.dryRun,
+          killSwitch: getKillSwitch(),
+          wsConnected: _agent?.feed?.connected ?? false,
+          enableCrypto: config.enableCrypto,
+          enableEquities: config.enableEquities,
+        },
+        balances: {
+          crypto: cryptoBalances,
+          stocks: stockBalances,
+        },
+        positions: {
+          crypto: cryptoPositions,
+          stocks: stockPositions,
+        },
+        latestSignals,
+        recentFills,
+        totalPortfolioPnl,
+      });
+    } catch (err) {
+      json(res, 500, { error: err.message });
+    }
   },
 
   'GET /kill-switch': async (_req, res) => {
