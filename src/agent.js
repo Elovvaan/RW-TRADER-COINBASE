@@ -14,7 +14,10 @@ import { normalizeCryptoSignal, normalizeEquitySignal } from './unified/signals.
 import { portfolioValueUSD } from './accounts/index.js';
 
 const EXIT_CHECK_INTERVAL_MS = 60 * 1000; // Check exits every 60s
-const NO_TRADE_FORCE_WINDOW_MS = 60 * 60 * 1000;
+// Additional confidence-threshold relaxation applied after prolonged inactivity.
+const INACTIVITY_THRESHOLD_BOOST = 0.02;
+// Per-trade shortfall multiplier used to relax day-trade confidence threshold.
+const SHORTFALL_RELAXATION_FACTOR = 0.03;
 
 export class TradingAgent {
   constructor() {
@@ -235,9 +238,7 @@ export class TradingAgent {
     } else {
       this.idleCapitalSince = null;
     }
-    const maxConcurrentPositions = smallAccountMode
-      ? (totalEquityUsd <= config.smallAccount.lowEquitySinglePositionUsd ? 1 : Math.max(1, Math.min(2, config.smallAccount.maxOpenPositions)))
-      : config.dayTrade.maxOpenPositions;
+    const maxConcurrentPositions = this._calculateMaxPositionsForEquity(totalEquityUsd, smallAccountMode);
     return {
       balances,
       availableUsd,
@@ -254,6 +255,12 @@ export class TradingAgent {
     };
   }
 
+  _calculateMaxPositionsForEquity(totalEquityUsd, smallAccountMode) {
+    if (!smallAccountMode) return config.dayTrade.maxOpenPositions;
+    if (totalEquityUsd <= config.smallAccount.lowEquitySinglePositionUsd) return 1;
+    return Math.max(1, Math.min(2, config.smallAccount.maxOpenPositions));
+  }
+
   _effectiveDayTradeThreshold() {
     if (config.strategyMode !== 'DAY_TRADE') return config.signalConfidenceThreshold;
     const base = Number(config.dayTrade.minConfidence || 0.4);
@@ -263,10 +270,13 @@ export class TradingAgent {
     const elapsedRatio = Math.min(1, elapsedMs / durationMs);
     const targetByNow = Number(config.dayTrade.minTradesTarget || 1) * elapsedRatio;
     const shortfall = Math.max(0, targetByNow - this.dayTradeSession.tradesExecuted);
-    const inactivityBoost = this.lastTradeExecutedAt > 0 && (Date.now() - this.lastTradeExecutedAt) >= NO_TRADE_FORCE_WINDOW_MS ? 0.02 : 0;
+    const inactivityBoost = this.lastTradeExecutedAt > 0
+      && (Date.now() - this.lastTradeExecutedAt) >= config.dayTrade.inactivityForceTradeMs
+      ? INACTIVITY_THRESHOLD_BOOST
+      : 0;
     const relaxation = Math.min(
       Number(config.dayTrade.maxThresholdRelaxation || 0.08),
-      (shortfall * 0.03) + inactivityBoost,
+      (shortfall * SHORTFALL_RELAXATION_FACTOR) + inactivityBoost,
     );
     const threshold = Math.max(fallbackFloor, base - relaxation);
     if (relaxation > 0) {
@@ -283,11 +293,18 @@ export class TradingAgent {
   }
 
   _forceTradeReason(accountState) {
-    const noTradeTooLong = this.lastTradeExecutedAt <= 0
-      || (Date.now() - this.lastTradeExecutedAt >= NO_TRADE_FORCE_WINDOW_MS);
+    const noTradeTooLong = (Date.now() - this.lastTradeExecutedAt) >= config.dayTrade.inactivityForceTradeMs;
     if (accountState?.idleCapitalForcingActive) return 'IDLE_CAPITAL_FORCE';
     if (noTradeTooLong) return 'NO_TRADE_60M';
     return null;
+  }
+
+  _requiredConfidenceForSignal(signal, dayTradeConfidenceThreshold) {
+    if (config.strategyMode !== 'DAY_TRADE') return config.signalConfidenceThreshold;
+    if (signal.reason === 'DAY_TRADE_MOMENTUM_FALLBACK') {
+      return Math.min(dayTradeConfidenceThreshold, config.dayTrade.fallbackMinConfidence);
+    }
+    return dayTradeConfidenceThreshold;
   }
 
   async _executeForcedTradeIfNeeded({ summary, priceMap, candidates, accountState }) {
@@ -477,13 +494,7 @@ export class TradingAgent {
 
             forceCandidates.push({ productId, signal, unifiedSignal, snapshot: snap });
 
-            const requiredConfidence = config.strategyMode === 'DAY_TRADE'
-              ? (
-                  signal.reason === 'DAY_TRADE_MOMENTUM_FALLBACK'
-                    ? Math.min(dayTradeConfidenceThreshold, config.dayTrade.fallbackMinConfidence)
-                    : dayTradeConfidenceThreshold
-                )
-              : config.signalConfidenceThreshold;
+            const requiredConfidence = this._requiredConfidenceForSignal(signal, dayTradeConfidenceThreshold);
             if (signal.confidence < requiredConfidence) {
               this._incrementSkipped(summary);
               this._recordDecision({

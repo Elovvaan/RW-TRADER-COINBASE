@@ -1,6 +1,12 @@
 import config from '../../config/index.js';
 import log from '../logging/index.js';
 
+const MIN_SINGLE_TRADE_PCT = 0.01;
+const MAX_SINGLE_TRADE_PCT = 0.99;
+const DEFAULT_MAX_SINGLE_TRADE_PCT = 0.95;
+const MIN_SMALL_ACCOUNT_POSITION_PCT = 0.01;
+const MAX_SMALL_ACCOUNT_POSITION_PCT = 0.95;
+
 function toExposureUsd(position) {
   const price = Number(position.currentPrice);
   const size = Number(position.size);
@@ -60,18 +66,25 @@ export async function allocateSignal({ signal, positions, balancesByBroker, dail
   const confidenceMultiplier = Math.min(1, Math.max(0.25, confidence));
   const confidenceScaledTarget = targetNotional * confidenceMultiplier;
   const riskBoundNotional = marketPortfolioUsd * (limits.perPositionMaxRisk / riskPct);
+  const hasSmallAccountFlag = typeof executionContext.smallAccountMode === 'boolean';
   const smallAccountMode = signal.market === 'crypto'
-    && (Boolean(executionContext.smallAccountMode) || marketPortfolioUsd <= config.smallAccount.equityThresholdUsd);
+    && (hasSmallAccountFlag ? executionContext.smallAccountMode : marketPortfolioUsd <= config.smallAccount.equityThresholdUsd);
   const forceTrade = Boolean(executionContext.forceTrade);
   const forceMinNotional = Boolean(executionContext.forceMinNotional);
-  const maxSingleTradeCashPct = Math.max(0.01, Math.min(0.99, Number(config.smallAccount.maxSingleTradeCashPct || 0.95)));
+  const maxSingleTradeCashPct = Math.max(
+    MIN_SINGLE_TRADE_PCT,
+    Math.min(MAX_SINGLE_TRADE_PCT, Number(config.smallAccount.maxSingleTradeCashPct || DEFAULT_MAX_SINGLE_TRADE_PCT)),
+  );
 
   let requestedNotional = Number.isFinite(proposedNotionalUsd) && proposedNotionalUsd > 0
     ? proposedNotionalUsd
     : confidenceScaledTarget;
   if (signal.market === 'crypto' && smallAccountMode) {
-    const minPct = Math.max(0.01, Math.min(0.95, Number(config.smallAccount.minPositionPct || 0.2)));
-    const maxPct = Math.max(minPct, Math.min(0.99, Number(config.smallAccount.maxPositionPct || 0.5)));
+    const minPct = Math.max(
+      MIN_SMALL_ACCOUNT_POSITION_PCT,
+      Math.min(MAX_SMALL_ACCOUNT_POSITION_PCT, Number(config.smallAccount.minPositionPct || 0.2)),
+    );
+    const maxPct = Math.max(minPct, Math.min(MAX_SINGLE_TRADE_PCT, Number(config.smallAccount.maxPositionPct || 0.5)));
     const confidenceScaledPct = minPct + ((maxPct - minPct) * Math.min(1, Math.max(0, confidence)));
     requestedNotional = Math.max(requestedNotional, availableCash * confidenceScaledPct);
     if (forceMinNotional) {

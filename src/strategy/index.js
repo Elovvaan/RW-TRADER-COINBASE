@@ -13,6 +13,8 @@ const DAY_TRADE_GRANULARITY = {
   '5m': 'FIVE_MINUTE',
   '15m': 'FIFTEEN_MINUTE',
 };
+const MICRO_TREND_THRESHOLD_PCT = 0.0008;
+const MICRO_TREND_LOOKBACK_PERIODS = 4;
 
 // ── Indicator helpers ─────────────────────────────────────────────────────────
 
@@ -195,11 +197,12 @@ async function generateDayTradeSignal(productId, currentPrice, timeframe) {
     const regime = regimeFast > regimeSlow ? 'BULL' : 'BEAR';
     const momentumBull = ema9 > ema21 && ema21 >= ema34;
     const latest = closes[closes.length - 1];
-    const prior = closes[Math.max(0, closes.length - 4)];
+    // intradayCandles length is validated (>= 60), so this lookback index is safe in day-trade mode.
+    const prior = closes[Math.max(0, closes.length - MICRO_TREND_LOOKBACK_PERIODS)];
     const microTrendPct = Number.isFinite(latest) && Number.isFinite(prior) && prior > 0
       ? (latest - prior) / prior
       : 0;
-    const microTrendDetected = (ema9 >= ema21) || microTrendPct > 0.0008;
+    const microTrendDetected = (ema9 >= ema21) || microTrendPct > MICRO_TREND_THRESHOLD_PCT;
     const shortTermMomentum = momentumBull || (Number.isFinite(latest) && Number.isFinite(closes[closes.length - 2]) && latest > closes[closes.length - 2]);
     const pullbackRsi = Number.isFinite(intradayRsi)
       && intradayRsi >= config.dayTrade.rsiMin

@@ -136,7 +136,8 @@ class PortfolioState {
   hasRecentEntry(productId, windowMs) {
     const ts = this.lastEntryAt.get(productId);
     if (!ts) return false;
-    const durationMs = Number.isFinite(Number(windowMs)) ? Number(windowMs) : 0;
+    const durationMs = Number(windowMs);
+    if (!Number.isFinite(durationMs)) return false;
     if (durationMs <= 0) return false;
     return Date.now() - ts < durationMs;
   }
@@ -144,7 +145,8 @@ class PortfolioState {
   recentEntryRemaining(productId, windowMs) {
     const ts = this.lastEntryAt.get(productId);
     if (!ts) return 0;
-    const durationMs = Number.isFinite(Number(windowMs)) ? Number(windowMs) : 0;
+    const durationMs = Number(windowMs);
+    if (!Number.isFinite(durationMs)) return 0;
     if (durationMs <= 0) return 0;
     return Math.max(0, durationMs - (Date.now() - ts));
   }
