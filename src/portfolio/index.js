@@ -46,7 +46,7 @@ class PortfolioState {
     const pos = this.positions.get(productId);
     if (!pos) return;
 
-    const pnl = (exitPrice - pos.entryPrice) * pos.baseSize;
+    const pnl = _calculateUnrealizedPnl(pos, exitPrice);
     this.positions.delete(productId);
 
     if (pnl < 0) {
@@ -92,7 +92,7 @@ class PortfolioState {
     pos.lastPrice = markPrice;
     pos.lastMarketUpdateTs = marketTs;
 
-    const pnl = (markPrice - pos.entryPrice) * pos.baseSize;
+    const pnl = _calculateUnrealizedPnl(pos, markPrice);
     pos.unrealizedPnlUsd = pnl;
     pos.lastPnlUpdateTs = Date.now();
 
@@ -183,6 +183,13 @@ function _todayMidnight() {
   const d = new Date();
   d.setUTCHours(0, 0, 0, 0);
   return d.getTime();
+}
+
+function _calculateUnrealizedPnl(position, markPrice) {
+  if (position.side === 'SELL') {
+    return (position.entryPrice - markPrice) * position.baseSize;
+  }
+  return (markPrice - position.entryPrice) * position.baseSize;
 }
 
 // Singleton

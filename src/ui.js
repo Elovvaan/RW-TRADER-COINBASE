@@ -376,7 +376,8 @@ function ago(ts) {
 function ageSpan(ts) {
   const safeTs = (typeof ts === 'number' && Number.isFinite(ts)) ? ts : null;
   if (!safeTs) return '<span style="color:var(--muted)">—</span>';
-  return \`<span data-age-ts="\${safeTs}" style="color:var(--muted)">\${ago(safeTs)}</span>\`;
+  const attrTs = Math.trunc(safeTs);
+  return \`<span data-age-ts="\${attrTs}" style="color:var(--muted)">\${ago(attrTs)}</span>\`;
 }
 
 // ── Health ──
@@ -546,7 +547,7 @@ function startAutoRefresh() {
   setInterval(loadBalances,  30000);
   setInterval(loadSignals,   15000);
   setInterval(loadOrders,    15000);
-  setInterval(loadPositions, 3000);
+  setInterval(loadPositions, 5000);
   setInterval(refreshAgeCells, 1000);
 }
 

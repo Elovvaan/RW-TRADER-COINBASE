@@ -13,6 +13,7 @@ import portfolio from './portfolio/index.js';
 
 // Set by index.js after agent starts
 let _agent = null;
+let _lastUiRefreshTickLogAt = 0;
 export function attachAgent(agent) { _agent = agent; }
 
 function json(res, status, data) {
@@ -117,7 +118,9 @@ const routes = {
       const unrealizedPnlUsd = Number.isFinite(p.unrealizedPnlUsd)
         ? p.unrealizedPnlUsd
         : ((Number.isFinite(markPrice) && Number.isFinite(p.entryPrice) && Number.isFinite(p.baseSize))
-            ? ((markPrice - p.entryPrice) * p.baseSize)
+            ? ((p.side === 'SELL'
+                ? (p.entryPrice - markPrice)
+                : (markPrice - p.entryPrice)) * p.baseSize)
             : null);
 
       return {
@@ -132,12 +135,15 @@ const routes = {
       };
     });
 
-    log.info('UI_REFRESH_TICK', {
-      endpoint: '/positions',
-      openPositions: positions.length,
-      wsConnected: _agent?.feed?.connected ?? false,
-      refreshedAt: new Date(now).toISOString(),
-    });
+    if (now - _lastUiRefreshTickLogAt >= 15000) {
+      _lastUiRefreshTickLogAt = now;
+      log.info('UI_REFRESH_TICK', {
+        endpoint: '/positions',
+        openPositions: positions.length,
+        wsConnected: _agent?.feed?.connected ?? false,
+        refreshedAt: new Date(now).toISOString(),
+      });
+    }
 
     json(res, 200, {
       ...state,
