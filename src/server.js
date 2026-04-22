@@ -79,6 +79,7 @@ function getControlState() {
   return {
     cryptoAutoEnabled: config.cryptoAutoEnabled,
     stockPaperEnabled: config.stockPaperEnabled,
+    strategyMode: config.strategyMode,
     authority: config.authority,
     globalKillSwitch: getKillSwitch(),
   };
@@ -100,12 +101,49 @@ function setControlState(next) {
     }
     config.authority = authority;
   }
+  if (typeof next.strategyMode === 'string') {
+    const strategyMode = String(next.strategyMode).toUpperCase();
+    if (!['SWING', 'DAY_TRADE'].includes(strategyMode)) {
+      throw new Error('strategyMode must be SWING or DAY_TRADE');
+    }
+    config.strategyMode = strategyMode;
+  }
   if (typeof next.globalKillSwitch === 'boolean') {
     config.globalKillSwitch = next.globalKillSwitch;
     config.killSwitch = next.globalKillSwitch;
     setKillSwitch(next.globalKillSwitch);
   }
   return getControlState();
+}
+
+function getPositionsPayload() {
+  const now = Date.now();
+  const state = portfolio.snapshot();
+  const { cryptoPositions } = syncUnifiedPositionRegistry();
+  const positions = cryptoPositions;
+
+  if (now - _lastUiRefreshTickLogAt >= 15000) {
+    _lastUiRefreshTickLogAt = now;
+    log.info('UI_REFRESH_TICK', {
+      endpoint: '/positions',
+      openPositions: positions.length,
+      wsConnected: _agent?.feed?.connected ?? false,
+      refreshedAt: new Date(now).toISOString(),
+    });
+  }
+
+  return {
+    ...state,
+    positions,
+    wsConnected: _agent?.feed?.connected ?? false,
+    ts: new Date(now).toISOString(),
+  };
+}
+
+async function serveDashboardPage(res) {
+  const { getDashboardHTML } = await import('./ui.js');
+  res.writeHead(200, { 'Content-Type': 'text/html' });
+  res.end(getDashboardHTML());
 }
 
 function json(res, status, data) {
@@ -202,28 +240,11 @@ const routes = {
     }
   },
 
-  'GET /positions': async (_req, res) => {
-    const now = Date.now();
-    const state = portfolio.snapshot();
-    const { cryptoPositions } = syncUnifiedPositionRegistry();
-    const positions = cryptoPositions;
-
-    if (now - _lastUiRefreshTickLogAt >= 15000) {
-      _lastUiRefreshTickLogAt = now;
-      log.info('UI_REFRESH_TICK', {
-        endpoint: '/positions',
-        openPositions: positions.length,
-        wsConnected: _agent?.feed?.connected ?? false,
-        refreshedAt: new Date(now).toISOString(),
-      });
-    }
-
-    json(res, 200, {
-      ...state,
-      positions,
-      wsConnected: _agent?.feed?.connected ?? false,
-      ts: new Date(now).toISOString(),
-    });
+  'GET /positions/data': async (_req, res) => {
+    json(res, 200, getPositionsPayload());
+  },
+  'GET /api/positions': async (_req, res) => {
+    json(res, 200, getPositionsPayload());
   },
 
   'GET /unified/dashboard': async (_req, res) => {
@@ -238,6 +259,7 @@ const routes = {
 
       const { cryptoPositions, stockPositions, all } = syncUnifiedPositionRegistry();
       const latestSignals = _agent ? _agent.getSignals() : [];
+      const cryptoDecisions = _agent ? _agent.getCryptoDecisions() : [];
       const unrealizedCryptoPnl = cryptoPositions.reduce((sum, position) => sum + Number(position.unrealizedPnL || 0), 0);
       const unrealizedStockPnl = stockPositions.reduce((sum, position) => sum + Number(position.unrealizedPnL || 0), 0);
 
@@ -268,6 +290,7 @@ const routes = {
           paperFills: stockFills,
         },
         signals: latestSignals,
+        cryptoDecisions,
         positions: {
           realCrypto: cryptoPositions,
           paperStocks: stockPositions,
@@ -279,7 +302,10 @@ const routes = {
     }
   },
 
-  'GET /control': async (_req, res) => {
+  'GET /control/state': async (_req, res) => {
+    json(res, 200, getControlState());
+  },
+  'GET /api/control': async (_req, res) => {
     json(res, 200, getControlState());
   },
 
@@ -289,6 +315,7 @@ const routes = {
       const nextState = setControlState({
         cryptoAutoEnabled: typeof body.cryptoAutoEnabled === 'boolean' ? body.cryptoAutoEnabled : undefined,
         stockPaperEnabled: typeof body.stockPaperEnabled === 'boolean' ? body.stockPaperEnabled : undefined,
+        strategyMode: body.strategyMode,
         authority: body.authority,
         globalKillSwitch: typeof body.globalKillSwitch === 'boolean' ? body.globalKillSwitch : undefined,
       });
@@ -339,9 +366,23 @@ const routes = {
 
   // Serve dashboard UI
   'GET /': async (_req, res) => {
-    const { getDashboardHTML } = await import('./ui.js');
-    res.writeHead(200, { 'Content-Type': 'text/html' });
-    res.end(getDashboardHTML());
+    res.writeHead(302, { Location: '/home' });
+    res.end();
+  },
+  'GET /home': async (_req, res) => {
+    await serveDashboardPage(res);
+  },
+  'GET /markets': async (_req, res) => {
+    await serveDashboardPage(res);
+  },
+  'GET /chart': async (_req, res) => {
+    await serveDashboardPage(res);
+  },
+  'GET /positions': async (_req, res) => {
+    await serveDashboardPage(res);
+  },
+  'GET /control': async (_req, res) => {
+    await serveDashboardPage(res);
   },
 };
 

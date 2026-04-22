@@ -67,13 +67,29 @@ export class UnifiedExecutionRouter {
       ? config.execution.cryptoAllowPyramiding
       : config.execution.stockAllowPyramiding;
 
+    if (signal.market === 'crypto' && !hasExistingPosition) {
+      const openCryptoPositions = portfolio.getAllPositions().length;
+      const modeLimit = config.strategyMode === 'DAY_TRADE'
+        ? config.dayTrade.maxOpenPositions
+        : config.tradingPairs.length;
+      if (openCryptoPositions >= modeLimit) {
+        log.info('MAX_POSITIONS_BLOCKED', {
+          market: signal.market,
+          symbol: signal.symbol,
+          openPositions: openCryptoPositions,
+          maxPositions: modeLimit,
+        });
+        return { executed: false, reason: 'MAX_POSITIONS_REACHED' };
+      }
+    }
+
     if (hasExistingPosition && !pyramidingAllowed) {
-      log.info('POSITION_ADD_BLOCKED_DUPLICATE', {
+      log.info('DUPLICATE_ENTRY_BLOCKED', {
         market: signal.market,
         symbol: signal.symbol,
         pyramidingAllowed,
       });
-      return { executed: false, reason: 'POSITION_DUPLICATE_BLOCKED' };
+      return { executed: false, reason: 'DUPLICATE_ENTRY_BLOCKED' };
     }
     log.info('POSITION_ADD_ALLOWED', {
       market: signal.market,

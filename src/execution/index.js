@@ -22,6 +22,7 @@ export async function evaluateAndExecute(signal, snapshot, priceMap) {
   if (signal.action !== 'BUY') return { executed: false, reason: signal.reason };
 
   const { productId, entryPrice, tpPrice, slPrice } = signal;
+  const cooldownAfterStopMs = Number(signal?.indicators?.cooldownAfterStopMs);
 
   // ── 1. Portfolio value for sizing ─────────────────────────────────────────
   let balances, portfolioUSD;
@@ -36,7 +37,13 @@ export async function evaluateAndExecute(signal, snapshot, priceMap) {
   const quoteSize = calculatePositionSize(portfolioUSD);
 
   // ── 2. Risk checks ────────────────────────────────────────────────────────
-  const risk = runRiskChecks({ productId, snapshot, proposedQuote: quoteSize, portfolioUSD });
+  const risk = runRiskChecks({
+    productId,
+    snapshot,
+    proposedQuote: quoteSize,
+    portfolioUSD,
+    cooldownAfterStopMs: Number.isFinite(cooldownAfterStopMs) ? cooldownAfterStopMs : undefined,
+  });
   if (!risk.approved) {
     return { executed: false, reason: risk.reason, details: risk.details };
   }
@@ -98,7 +105,7 @@ export async function evaluateAndExecute(signal, snapshot, priceMap) {
     });
   }
 
-  return { executed: true, result, signal, preview };
+  return { executed: true, result, signal, preview, positionOpened: !result.dryRun };
 }
 
 // ── Exit execution ────────────────────────────────────────────────────────────

@@ -30,7 +30,7 @@ export function getKillSwitch() {
  * @returns {{ approved: boolean, reason: string, details: object }}
  */
 export function runRiskChecks(opts) {
-  const { productId, snapshot, proposedQuote, portfolioUSD } = opts;
+  const { productId, snapshot, proposedQuote, portfolioUSD, cooldownAfterStopMs } = opts;
   const r = config.risk;
 
   // 1. Kill switch
@@ -44,9 +44,12 @@ export function runRiskChecks(opts) {
   }
 
   // 3. Cooldown after stop-out
-  if (portfolio.isInCooldown(productId)) {
-    const remaining = portfolio.cooldownRemaining(productId);
-    return _block('COOLDOWN_ACTIVE', { productId, remainingMs: remaining });
+  const cooldownMs = Number.isFinite(Number(cooldownAfterStopMs))
+    ? Number(cooldownAfterStopMs)
+    : r.cooldownAfterStopMs;
+  if (portfolio.isInCooldown(productId, cooldownMs)) {
+    const remaining = portfolio.cooldownRemaining(productId, cooldownMs);
+    return _block('COOLDOWN_ACTIVE', { productId, remainingMs: remaining, cooldownMs });
   }
 
   // 4. Stale price
