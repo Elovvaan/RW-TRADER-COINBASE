@@ -14,6 +14,7 @@ import stockAdapter from './brokers/stock-adapter.js';
 import coinbaseAdapter from './brokers/coinbase-adapter.js';
 import unifiedPositionRegistry from './unified/position-registry.js';
 import unifiedExecutionRouter from './unified/execution-router.js';
+import { getAutonomyStatus } from './autonomy.js';
 
 // Set by index.js after agent starts
 let _agent = null;
@@ -179,6 +180,7 @@ const routes = {
     const agentRunning = Boolean(_agent);
     const cryptoReady = !config.cryptoAutoEnabled || hasCredentials;
     const equitiesReady = !config.stockPaperEnabled || agentRunning;
+    const autonomy = getAutonomyStatus();
     json(res, 200, {
       status: agentRunning && cryptoReady && equitiesReady ? 'ok' : 'degraded',
       ts: new Date().toISOString(),
@@ -201,6 +203,7 @@ const routes = {
               ? 'Coinbase credentials loaded and trading agent running.'
               : 'Coinbase credentials loaded, but startup validation failed. Running in degraded mode.'),
       },
+      autonomy,
     });
   },
 
