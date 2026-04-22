@@ -1,8 +1,11 @@
 # rw-trader-cb
 
-Production-grade spot crypto swing-trading agent for **Coinbase Advanced Trade API v3**.
+Production-grade RW-Trader with one trading brain and two broker adapters:
+- **Coinbase Advanced Trade API v3** for crypto
+- **Stock broker execution layer** for equities (starter symbols: `AAPL,NVDA,TSLA,SPY`)
 
-- Spot only — no futures, margin, or leverage
+- Unified execution router (`crypto -> Coinbase`, `equities -> stock broker`)
+- Spot crypto + equities routing (custody remains broker-separated)
 - WebSocket market feed with automatic REST fallback
 - Multi-gate risk engine runs before every order
 - Dry-run by default; live execution requires explicit opt-in
@@ -22,8 +25,16 @@ rw-trader-cb/
 ├── scripts/
 │   ├── setup.sh              # Install deps, copy .env
 │   └── test-api.sh           # Smoke-test all REST endpoints
-└── src/
-    ├── index.js              # Entry point + graceful shutdown
+    └── src/
+        ├── brokers/
+        │   ├── coinbase-adapter.js
+        │   └── stock-adapter.js
+        ├── unified/
+        │   ├── allocator.js
+        │   ├── execution-router.js
+        │   ├── position-registry.js
+        │   └── signals.js
+        ├── index.js              # Entry point + graceful shutdown
     ├── startup.js            # Startup validation (credentials, perms, prices)
     ├── agent.js              # Main trading loop (signal → risk → execute)
     ├── rest.js               # Authenticated REST client
@@ -67,6 +78,17 @@ cp .env.example .env
 # Edit .env — fill in CB_API_KEY_NAME and CB_API_PRIVATE_KEY
 ```
 
+Unified dual-broker switches:
+- `ENABLE_CRYPTO=true` keeps existing Coinbase path active.
+- `ENABLE_EQUITIES=true` enables stock adapter routing.
+- `STOCK_SYMBOLS=AAPL,NVDA,TSLA,SPY` starter equities universe.
+- Allocation controls:
+  - `MAX_TOTAL_DAILY_LOSS_USD`
+  - `MAX_CRYPTO_ALLOCATION`
+  - `MAX_EQUITIES_ALLOCATION`
+  - `PER_POSITION_MAX_RISK`
+  - `TARGET_NOTIONAL_PCT`
+
 ### 4. Validate credentials
 
 ```bash
@@ -87,6 +109,10 @@ This confirms (when credentials are provided):
 ```bash
 DRY_RUN=true AUTHORITY=ASSIST npm start
 ```
+
+Default feature flags:
+- `ENABLE_CRYPTO=true`
+- `ENABLE_EQUITIES=true`
 
 If Coinbase credentials are not set, the API server still starts and `/health` reports `status: "degraded"` with a credentials message.
 
@@ -118,6 +144,7 @@ DRY_RUN=false AUTHORITY=AUTO npm start
 | GET | `/signals` | Latest signal per pair |
 | GET | `/orders` | Open orders + recent fills |
 | GET | `/positions` | Open positions + daily P&L |
+| GET | `/unified/dashboard` | Unified status, split balances/positions, latest signals, fills, total portfolio PnL |
 | GET/POST | `/kill-switch` | Read or toggle kill switch |
 | GET/POST | `/mode` | Read or set authority mode |
 | DELETE | `/orders` | Cancel all open orders |
@@ -234,3 +261,13 @@ sudo journalctl -u rw-trader -f
 - DRY_RUN=true is the safe default; AUTO requires explicit opt-in
 - Kill switch can be toggled via API without restarting the process
 - All logs are NDJSON to stdout — pipe to a log aggregator in production
+
+---
+
+## Safe Rollout Plan (No Coinbase Breakage)
+
+1. Deploy with `ENABLE_CRYPTO=true` and `ENABLE_EQUITIES=false` to confirm Coinbase behavior remains unchanged.
+2. Validate health and existing endpoints (`/health`, `/balances`, `/positions`, `/signals`) under dry run.
+3. Enable equities with `ENABLE_EQUITIES=true` while keeping `DRY_RUN=true` and `AUTHORITY=ASSIST`.
+4. Verify unified dashboard panel data from `/unified/dashboard`.
+5. Move to `DRY_RUN=false` only after reviewing allocator limits and kill-switch behavior.

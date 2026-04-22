@@ -4,10 +4,13 @@
 import config from '../config/index.js';
 import log from './logging/index.js';
 import { MarketFeed } from './market/index.js';
-import { generateSignal, checkExits } from './strategy/index.js';
-import { evaluateAndExecute, checkAndExecuteExits } from './execution/index.js';
+import { generateSignal } from './strategy/index.js';
+import { checkAndExecuteExits } from './execution/index.js';
 import { getKillSwitch } from './risk/index.js';
 import portfolio from './portfolio/index.js';
+import stockAdapter from './brokers/stock-adapter.js';
+import unifiedExecutionRouter from './unified/execution-router.js';
+import { normalizeCryptoSignal, normalizeEquitySignal } from './unified/signals.js';
 
 const EXIT_CHECK_INTERVAL_MS = 60 * 1000;         // Check exits every 60s
 
@@ -15,7 +18,7 @@ export class TradingAgent {
   constructor() {
     this.feed     = new MarketFeed(config.tradingPairs);
     this._onTicker = (snapshot) => portfolio.applyMarketSnapshot(snapshot);
-    this.signals  = {};       // productId → latest signal
+    this.signals  = {};       // `${market}:${symbol}` → latest unified signal
     this.running  = false;
     this._signalTimer = null;
     this._exitTimer   = null;
@@ -32,17 +35,20 @@ export class TradingAgent {
     this.running = true;
     log.info('AGENT_START', {
       pairs: config.tradingPairs,
+      stockSymbols: config.stockSymbols,
+      enableCrypto: config.enableCrypto,
+      enableEquities: config.enableEquities,
       authority: config.authority,
       dryRun: config.dryRun,
       scanIntervalMs: config.scanIntervalMs,
       signalConfidenceThreshold: config.signalConfidenceThreshold,
     });
 
-    // Keep position telemetry synced to incoming market ticks
-    this.feed.on('ticker', this._onTicker);
-
-    // Start WebSocket feed
-    await this.feed.start();
+    if (config.enableCrypto) {
+      // Keep position telemetry synced to incoming market ticks
+      this.feed.on('ticker', this._onTicker);
+      await this.feed.start();
+    }
 
     // Initial signal pass immediately, then recurring interval
     await this._runSignalCycleSafely('startup');
@@ -66,8 +72,10 @@ export class TradingAgent {
     this.running = false;
     clearInterval(this._signalTimer);
     clearInterval(this._exitTimer);
-    this.feed.off('ticker', this._onTicker);
-    this.feed.stop();
+    if (config.enableCrypto) {
+      this.feed.off('ticker', this._onTicker);
+      this.feed.stop();
+    }
     log.info('AGENT_STOPPED', {});
   }
 
@@ -127,6 +135,8 @@ export class TradingAgent {
       const priceMap = this._buildPriceMap();
 
       for (const productId of config.tradingPairs) {
+        if (!config.enableCrypto) break;
+
         if (getKillSwitch()) {
           log.info('SIGNAL_SKIPPED', { trigger, productId, reason: 'KILL_SWITCH_ACTIVE' });
           continue;
@@ -164,7 +174,8 @@ export class TradingAgent {
 
         try {
           const signal = await generateSignal(productId, snap.price);
-          this.signals[productId] = signal;
+          const unifiedSignal = normalizeCryptoSignal(signal);
+          this.signals[`crypto:${productId}`] = unifiedSignal;
           summary.pairsEvaluated += 1;
 
           log.info('PAIR_EVALUATED', {
@@ -203,7 +214,11 @@ export class TradingAgent {
             continue;
           }
 
-          const execution = await evaluateAndExecute(signal, snap, priceMap);
+          const execution = await unifiedExecutionRouter.route({
+            signal: unifiedSignal,
+            snapshot: snap,
+            priceMap,
+          });
           if (execution?.executed) {
             summary.executedTrades += 1;
           } else {
@@ -219,6 +234,25 @@ export class TradingAgent {
           summary.pairsEvaluated += 1;
           summary.skippedSignals += 1;
           log.error('SIGNAL_CYCLE_ERROR', { productId, error: err.message });
+        }
+      }
+
+      if (config.enableEquities) {
+        for (const symbol of config.stockSymbols) {
+          const equitySignal = normalizeEquitySignal(stockAdapter.generateSignal(symbol));
+          this.signals[`equities:${symbol}`] = equitySignal;
+
+          if (equitySignal.side !== 'BUY') continue;
+          if (equitySignal.confidence < config.signalConfidenceThreshold) continue;
+          if (config.authority === 'OFF') continue;
+          if (getKillSwitch()) continue;
+
+          const execution = await unifiedExecutionRouter.route({
+            signal: equitySignal,
+            snapshot: { ts: equitySignal.ts, price: equitySignal.entry, spreadPct: 0, bid: equitySignal.entry, ask: equitySignal.entry },
+            priceMap,
+          });
+          if (execution?.executed) summary.executedTrades += 1;
         }
       }
 
@@ -240,6 +274,8 @@ export class TradingAgent {
 
   async _runExitCycle() {
     if (!this.running || getKillSwitch()) return;
+
+    if (!config.enableCrypto) return;
 
     const positions = portfolio.getAllPositions();
     if (!positions.length) return;
