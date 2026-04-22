@@ -25,7 +25,6 @@ function toHoldingUsd(currency, balance, priceMap) {
 
 function logAllocationDecision(payload) {
   log.info('ALLOCATION_DECISION', payload);
-  log.info('CAPITAL_ALLOCATION_DECISION', payload);
 }
 
 export async function allocateSignal({ signal, positions, balancesByBroker, dailyLossUsd, adapter, proposedNotionalUsd, priceMap = {}, executionContext = {} }) {
@@ -210,21 +209,12 @@ export async function allocateSignal({ signal, positions, balancesByBroker, dail
     }
     : null;
 
-  if (rotationPlan) {
-    log.info('ROTATION_DECISION', {
-      market: signal.market,
-      symbol: signal.symbol,
-      requiredUsd: rotationPlan.requiredUsd,
-      sources: rotationPlan.sources,
-    });
-  } else {
-    log.info('ROTATION_DECISION', {
-      market: signal.market,
-      symbol: signal.symbol,
-      requiredUsd: 0,
-      sources: [],
-    });
-  }
+  log.info('ROTATION_DECISION', {
+    market: signal.market,
+    symbol: signal.symbol,
+    requiredUsd: rotationPlan ? rotationPlan.requiredUsd : 0,
+    sources: rotationPlan ? rotationPlan.sources : [],
+  });
   log.info('REBALANCE_DECISION', {
     market: signal.market,
     symbol: signal.symbol,

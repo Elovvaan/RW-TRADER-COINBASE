@@ -94,12 +94,6 @@ export class UnifiedExecutionRouter {
           maxPositions: modeLimit,
           reason: 'MAX_POSITIONS_REACHED',
         });
-        log.info('MAX_POSITIONS_BLOCKED', {
-          market: signal.market,
-          symbol: signal.symbol,
-          openPositions: openCryptoPositions,
-          maxPositions: modeLimit,
-        });
         return { executed: false, reason: 'MAX_POSITIONS_REACHED' };
       }
       log.info('POSITION_OPEN_ALLOWED', {

@@ -18,6 +18,7 @@ import unifiedExecutionRouter from './unified/execution-router.js';
 // Set by index.js after agent starts
 let _agent = null;
 let _lastUiRefreshTickLogAt = 0;
+const CLOSE_POSITION_COMPLETION_THRESHOLD = 0.995;
 export function attachAgent(agent) { _agent = agent; }
 
 function getCryptoPositions() {
@@ -269,7 +270,8 @@ async function executeManualOverrideOrder(input) {
   let baseSize = availableBase;
   if (requestedClose && portfolio.hasPosition(symbol)) {
     const position = portfolio.getPosition(symbol);
-    baseSize = Math.min(availableBase, Number(position?.baseSize || availableBase));
+    const trackedBaseSize = Number(position?.baseSize);
+    baseSize = Math.min(availableBase, Number.isFinite(trackedBaseSize) && trackedBaseSize > 0 ? trackedBaseSize : availableBase);
   } else if (!requestedClose) {
     if (!Number.isFinite(sizeUsd) || sizeUsd <= 0) {
       return { ok: false, code: 400, reason: 'INVALID_SIZE_USD', message: 'sizeUsd must be a positive number for SELL' };
@@ -293,7 +295,7 @@ async function executeManualOverrideOrder(input) {
     baseSize: Number(baseSize.toFixed(8)),
   });
   const tracked = portfolio.getPosition(symbol);
-  if (!result?.dryRun && tracked && baseSize >= Number(tracked.baseSize || 0) * 0.995) {
+  if (!result?.dryRun && tracked && baseSize >= Number(tracked.baseSize || 0) * CLOSE_POSITION_COMPLETION_THRESHOLD) {
     portfolio.closePosition(symbol, mark, 'manual_override');
   }
   return {

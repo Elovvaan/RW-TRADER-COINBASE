@@ -1305,13 +1305,19 @@ export function getDashboardHTML() {
     });
 
     document.getElementById('manual-buy').addEventListener('click', function() {
-      void submitManualOverride('BUY');
+      submitManualOverride('BUY').catch(function(err) {
+        logLine('MANUAL_OVERRIDE_REJECTED · ' + state.selectedSymbol + ' · REQUEST_FAILED · ' + String(err && err.message ? err.message : err));
+      });
     });
     document.getElementById('manual-sell').addEventListener('click', function() {
-      void submitManualOverride('SELL');
+      submitManualOverride('SELL').catch(function(err) {
+        logLine('MANUAL_OVERRIDE_REJECTED · ' + state.selectedSymbol + ' · REQUEST_FAILED · ' + String(err && err.message ? err.message : err));
+      });
     });
     document.getElementById('manual-close').addEventListener('click', function() {
-      void submitManualOverride('CLOSE');
+      submitManualOverride('CLOSE').catch(function(err) {
+        logLine('MANUAL_OVERRIDE_REJECTED · ' + state.selectedSymbol + ' · REQUEST_FAILED · ' + String(err && err.message ? err.message : err));
+      });
     });
 
     document.getElementById('refresh-interval').addEventListener('change', function(e) {

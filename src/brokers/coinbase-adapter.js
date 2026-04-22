@@ -101,7 +101,7 @@ export class CoinbaseAdapter {
       const product = await getProduct(productId);
       const minCheck = validateMinimumOrder(product, baseSize, null);
       if (!minCheck.valid) {
-        log.warn('ROTATION_DECISION', {
+        log.warn('ROTATION_SKIPPED', {
           market: 'crypto',
           symbol: signal.symbol,
           source: productId,
@@ -116,7 +116,7 @@ export class CoinbaseAdapter {
         side: 'SELL',
         baseSize: Number(baseSize.toFixed(8)),
       });
-      log.info('ROTATION_DECISION', {
+      log.info('ROTATION_SUBMITTED', {
         market: 'crypto',
         symbol: signal.symbol,
         source: productId,
