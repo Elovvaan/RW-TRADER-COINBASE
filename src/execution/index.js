@@ -117,12 +117,22 @@ export async function evaluateAndExecute(signal, snapshot, priceMap, options = {
       const addBase = quoteSize / entryPrice;
       const newBaseSize = Number(pos.baseSize) + addBase;
       const weightedEntry = ((Number(pos.baseSize) * Number(pos.entryPrice)) + (addBase * entryPrice)) / newBaseSize;
-      pos.baseSize = newBaseSize;
-      pos.quoteSpent = Number(pos.quoteSpent || 0) + quoteSize;
-      pos.entryPrice = weightedEntry;
-      pos.tpPrice = tpPrice;
-      pos.slPrice = slPrice;
-      pos.lastScaleInAt = Date.now();
+      const updatedQuoteSpent = Number(pos.quoteSpent || 0) + quoteSize;
+      const lastScaleInAt = Date.now();
+
+      portfolio.openPosition({
+        ...pos,
+        productId,
+        side: 'BUY',
+        entryPrice: weightedEntry,
+        quoteSpent: updatedQuoteSpent,
+        baseSize: newBaseSize,
+        tpPrice,
+        slPrice,
+        trailingStopPrice: pos.trailingStopPrice ?? null,
+        orderId: result.orderId,
+        lastScaleInAt,
+      });
       log.info('SCALE_IN_DECISION', {
         productId,
         addQuoteSize: quoteSize,
