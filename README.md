@@ -78,6 +78,17 @@ cp .env.example .env
 # Edit .env — fill in CB_API_KEY_NAME and CB_API_PRIVATE_KEY
 ```
 
+Unified dual-broker switches:
+- `ENABLE_CRYPTO=true` keeps existing Coinbase path active.
+- `ENABLE_EQUITIES=true` enables stock adapter routing.
+- `STOCK_SYMBOLS=AAPL,NVDA,TSLA,SPY` starter equities universe.
+- Allocation controls:
+  - `MAX_TOTAL_DAILY_LOSS_USD`
+  - `MAX_CRYPTO_ALLOCATION`
+  - `MAX_EQUITIES_ALLOCATION`
+  - `PER_POSITION_MAX_RISK`
+  - `TARGET_NOTIONAL_PCT`
+
 ### 4. Validate credentials
 
 ```bash
@@ -250,3 +261,13 @@ sudo journalctl -u rw-trader -f
 - DRY_RUN=true is the safe default; AUTO requires explicit opt-in
 - Kill switch can be toggled via API without restarting the process
 - All logs are NDJSON to stdout — pipe to a log aggregator in production
+
+---
+
+## Safe Rollout Plan (No Coinbase Breakage)
+
+1. Deploy with `ENABLE_CRYPTO=true` and `ENABLE_EQUITIES=false` to confirm Coinbase behavior remains unchanged.
+2. Validate health and existing endpoints (`/health`, `/balances`, `/positions`, `/signals`) under dry run.
+3. Enable equities with `ENABLE_EQUITIES=true` while keeping `DRY_RUN=true` and `AUTHORITY=ASSIST`.
+4. Verify unified dashboard panel data from `/unified/dashboard`.
+5. Move to `DRY_RUN=false` only after reviewing allocator limits and kill-switch behavior.
