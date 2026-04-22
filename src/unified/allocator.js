@@ -52,7 +52,7 @@ export async function allocateSignal({ signal, positions, balancesByBroker, dail
   const ethUsd = Number.isFinite(ethPrice) && ethPrice > 0 ? ethHeld * ethPrice : 0;
   const rotatableCryptoUsd = btcUsd + ethUsd;
   const symbolBase = String(signal.symbol || '').split('-')[0];
-  const symbolHeldUnits = Number(balancesByBroker.coinbase?.[symbolBase]?.available || 0);
+  const symbolHeldUnits = Number(balancesByBroker.coinbase?.[symbolBase]?.total || 0);
   const symbolUsdPrice = Number(executionContext.priceMap?.[`${symbolBase}-USD`] || executionContext.priceMap?.[signal.symbol] || 0);
   const symbolHeldUsd = Number.isFinite(symbolUsdPrice) && symbolUsdPrice > 0 ? symbolHeldUnits * symbolUsdPrice : 0;
   const stockUsd = Number(balancesByBroker.stocks?.USD?.available || 0);
