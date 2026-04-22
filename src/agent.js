@@ -171,7 +171,7 @@ export class TradingAgent {
 
   _executionStatus(reason) {
     if (!reason) return 'SIGNAL_SKIPPED';
-    if (reason === 'DUPLICATE_ENTRY_BLOCKED' || reason === 'POSITION_DUPLICATE_BLOCKED') return 'DUPLICATE_ENTRY_BLOCKED';
+    if (reason === 'DUPLICATE_ENTRY_BLOCKED') return 'DUPLICATE_ENTRY_BLOCKED';
     if (reason === 'MAX_POSITIONS_REACHED') return 'MAX_POSITIONS_BLOCKED';
     if ([
       'PER_POSITION_RISK_EXCEEDED',
@@ -194,7 +194,11 @@ export class TradingAgent {
     return 'SIGNAL_SKIPPED';
   }
 
-  _refreshDayTradeSession() {
+  _incrementSkipped(summary) {
+    summary.skippedSignals += 1;
+  }
+
+  _resetDayTradeSessionIfExpired() {
     if (config.strategyMode !== 'DAY_TRADE') return;
     const now = Date.now();
     if (now - this.dayTradeSession.startedAt < config.dayTrade.sessionDurationMs) return;
@@ -221,7 +225,7 @@ export class TradingAgent {
     }
 
     this._scanInProgress = true;
-    this._refreshDayTradeSession();
+    this._resetDayTradeSessionIfExpired();
     const startedAt = Date.now();
     this._scanSequence += 1;
 
@@ -261,7 +265,7 @@ export class TradingAgent {
         for (const productId of config.tradingPairs) {
           if (getKillSwitch()) {
             summary.pairsEvaluated += 1;
-            summary.skippedSignals += 1;
+            this._incrementSkipped(summary);
             this._recordDecision({
               productId,
               status: 'SIGNAL_SKIPPED',
@@ -273,7 +277,7 @@ export class TradingAgent {
           const snap = this.feed.getSnapshot(productId);
           if (!snap) {
             summary.pairsEvaluated += 1;
-            summary.skippedSignals += 1;
+            this._incrementSkipped(summary);
             log.warn('PAIR_EVALUATED', {
               trigger,
               scanId: summary.scanId,
@@ -310,7 +314,7 @@ export class TradingAgent {
             });
 
             if (signal.action !== 'BUY') {
-              summary.skippedSignals += 1;
+              this._incrementSkipped(summary);
               const status = signal.reason === 'NO_SETUP'
                 ? 'NO_SETUP'
                 : (signal.reason === 'REGIME_BLOCKED' ? 'REGIME_BLOCKED' : 'SIGNAL_SKIPPED');
@@ -324,7 +328,7 @@ export class TradingAgent {
             }
 
             if (signal.confidence < config.signalConfidenceThreshold) {
-              summary.skippedSignals += 1;
+              this._incrementSkipped(summary);
               this._recordDecision({
                 productId,
                 status: 'CONFIDENCE_TOO_LOW',
@@ -339,7 +343,7 @@ export class TradingAgent {
 
             if (config.strategyMode === 'DAY_TRADE') {
               if (this.dayTradeSession.tradesExecuted >= config.dayTrade.maxTradesPerSession) {
-                summary.skippedSignals += 1;
+                this._incrementSkipped(summary);
                 this._recordDecision({
                   productId,
                   status: 'SIGNAL_SKIPPED',
@@ -350,7 +354,7 @@ export class TradingAgent {
               }
 
               if (portfolio.isInCooldown(productId, config.dayTrade.cooldownAfterStopMs)) {
-                summary.skippedSignals += 1;
+                this._incrementSkipped(summary);
                 this._recordDecision({
                   productId,
                   status: 'RISK_BLOCKED',
@@ -392,7 +396,7 @@ export class TradingAgent {
                 }
               }
             } else {
-              summary.skippedSignals += 1;
+              this._incrementSkipped(summary);
               const status = this._executionStatus(execution?.reason);
               this._recordDecision({
                 productId,
@@ -404,7 +408,7 @@ export class TradingAgent {
             }
           } catch (err) {
             summary.pairsEvaluated += 1;
-            summary.skippedSignals += 1;
+            this._incrementSkipped(summary);
             log.error('SIGNAL_CYCLE_ERROR', { productId, error: err.message });
             this._recordDecision({
               productId,
@@ -474,7 +478,11 @@ export class TradingAgent {
     if (!Object.keys(priceMap).length) return;
 
     try {
-      const exits = await checkAndExecuteExits(priceMap);
+      const exitsResult = await checkAndExecuteExits(priceMap);
+      const exits = Array.isArray(exitsResult) ? exitsResult : [];
+      if (!Array.isArray(exitsResult)) {
+        log.warn('EXIT_CYCLE_UNEXPECTED_RESULT', { resultType: typeof exitsResult });
+      }
       if (config.strategyMode === 'DAY_TRADE' && Array.isArray(exits)) {
         exits.forEach((result) => {
           if (result?.reason === 'stop_loss' || result?.reason === 'stop_out') {

@@ -616,6 +616,7 @@ export function getDashboardHTML() {
     positions: [],
     signals: [],
     cryptoDecisions: [],
+    cryptoDecisionBySymbol: new Map(),
     fills: [],
     watch: new Map(),
     prevPrices: new Map(),
@@ -654,6 +655,13 @@ export function getDashboardHTML() {
   function isValidSignal(signal) {
     return signal && typeof signal === 'object' && !Array.isArray(signal);
   }
+  function isValidDecision(decision) {
+    return decision
+      && typeof decision === 'object'
+      && !Array.isArray(decision)
+      && Boolean(decision.symbol || decision.productId)
+      && Boolean(decision.status);
+  }
   function formatSignalLevel(signal, field) {
     return signal && Number.isFinite(Number(signal[field])) ? usd(signal[field]) : EMPTY_VALUE;
   }
@@ -685,15 +693,17 @@ export function getDashboardHTML() {
     return state.positions.find(function(p) { return p.symbol === symbol; }) || null;
   }
   function symbolDecision(symbol) {
-    return state.cryptoDecisions.find(function(d) { return d.symbol === symbol || d.productId === symbol; }) || null;
+    return state.cryptoDecisionBySymbol.get(symbol) || null;
+  }
+  function decisionLabel(decision) {
+    const raw = decision && (decision.skipReason || decision.status);
+    return raw ? String(raw).replaceAll('_', ' ') : 'WAIT';
   }
   function signalOrSkipBadge(symbol, side) {
     const normalizedSide = String(side || 'WAIT').toUpperCase();
     if (normalizedSide !== 'WAIT') return sideBadge(normalizedSide);
     const decision = symbolDecision(symbol);
-    const skipReason = decision && (decision.skipReason || decision.status);
-    if (!skipReason) return sideBadge('WAIT');
-    return '<span class=\"badge badge-wait\">' + String(skipReason).replaceAll('_', ' ') + '</span>';
+    return '<span class=\"badge badge-wait\">' + decisionLabel(decision) + '</span>';
   }
   function getSymbolPrice(symbol) {
     const pos = symbolPosition(symbol);
@@ -974,13 +984,12 @@ export function getDashboardHTML() {
     favContainer.innerHTML = FAVORITES.map(function(symbol) {
       const w = state.watch.get(symbol) || { price: null, movePct: 0, signal: 'WAIT' };
       const decision = symbolDecision(symbol);
-      const waitLabel = decision && (decision.skipReason || decision.status)
-        ? String(decision.skipReason || decision.status).replaceAll('_', ' ')
-        : 'WAIT';
+      const waitLabel = decisionLabel(decision);
+      const normalizedSignal = String(w.signal || 'WAIT').toUpperCase();
       return '<button class="symbol-chip ' + (state.selectedSymbol === symbol ? 'active' : '') + '" data-symbol="' + symbol + '">' +
         '<div class="top"><b>' + symbol + '</b>' + typeBadge(symbol) + '</div>' +
         '<div class="price">' + (Number.isFinite(w.price) ? usd(w.price) : EMPTY_VALUE) + '</div>' +
-        '<div class="' + clsSigned(w.movePct) + '">' + formatPercent(w.movePct) + ' · ' + (String(w.signal || 'WAIT').toUpperCase() === 'WAIT' ? waitLabel : String(w.signal || 'WAIT').toUpperCase()) + '</div>' +
+        '<div class="' + clsSigned(w.movePct) + '">' + formatPercent(w.movePct) + ' · ' + (normalizedSignal === 'WAIT' ? waitLabel : normalizedSignal) + '</div>' +
       '</button>';
     }).join('');
 
@@ -1008,6 +1017,7 @@ export function getDashboardHTML() {
     const symbol = state.selectedSymbol;
     const sig = symbolSignal(symbol);
     const pos = symbolPosition(symbol);
+    const decision = symbolDecision(symbol);
     const svg = document.getElementById('main-chart');
     const candles = aggregateCandles(symbol, state.timeframe);
 
@@ -1019,7 +1029,7 @@ export function getDashboardHTML() {
     const signalBadge = document.getElementById('chart-signal-badge');
     signalBadge.className = 'badge ' + (side === 'BUY' ? 'badge-buy' : side === 'SELL' ? 'badge-sell' : 'badge-wait');
     signalBadge.textContent = side === 'WAIT'
-      ? ((symbolDecision(symbol)?.skipReason || side).replaceAll('_', ' '))
+      ? decisionLabel(decision)
       : side;
 
     const livePrice = getSymbolPrice(symbol);
@@ -1040,7 +1050,7 @@ export function getDashboardHTML() {
       ? ('OPEN ' + pos.side + ' · ' + usd(pos.unrealizedPnL || 0))
       : 'Flat';
     document.getElementById('chart-detail-mode').textContent = state.strategyMode;
-    document.getElementById('chart-detail-regime').textContent = sig?.indicators?.regime || symbolDecision(symbol)?.regime || EMPTY_VALUE;
+    document.getElementById('chart-detail-regime').textContent = sig?.indicators?.regime || decision?.regime || EMPTY_VALUE;
 
     if (!candles.length) {
       svg.innerHTML =
@@ -1318,7 +1328,11 @@ export function getDashboardHTML() {
 
       state.dashboard = dashboard;
       state.signals = dashboard.signals || [];
-      state.cryptoDecisions = (dashboard.cryptoDecisions || []).filter(isValidSignal);
+      state.cryptoDecisions = (dashboard.cryptoDecisions || []).filter(isValidDecision);
+      state.cryptoDecisionBySymbol = new Map(state.cryptoDecisions.map(function(decision) {
+        const key = decision.symbol || decision.productId;
+        return [key, decision];
+      }));
       reconcileSignals(state.signals);
 
       const cryptoPositions = (((dashboard.realCrypto || {}).openPositions) || []).map(normalizePosition);

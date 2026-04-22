@@ -162,9 +162,10 @@ async function generateSwingSignal(productId, currentPrice) {
 }
 
 async function generateDayTradeSignal(productId, currentPrice, timeframe) {
+  const validatedTimeframe = DAY_TRADE_GRANULARITY[timeframe] ? timeframe : '1m';
   try {
     const now = Math.floor(Date.now() / 1000);
-    const granularity = DAY_TRADE_GRANULARITY[timeframe] || DAY_TRADE_GRANULARITY['1m'];
+    const granularity = DAY_TRADE_GRANULARITY[validatedTimeframe];
     const [intradayCandles, regimeCandles] = await Promise.all([
       getCandles(productId, granularity, now - 86400, now),
       getCandles(productId, 'FIFTEEN_MINUTE', now - (86400 * 3), now),
@@ -173,7 +174,7 @@ async function generateDayTradeSignal(productId, currentPrice, timeframe) {
     if (intradayCandles.length < 60 || regimeCandles.length < 60) {
       return _waitSignal(productId, 'NO_SETUP', currentPrice, {
         strategyMode: 'DAY_TRADE',
-        timeframe,
+        timeframe: validatedTimeframe,
         regime: 'UNKNOWN',
       });
     }
@@ -193,11 +194,14 @@ async function generateDayTradeSignal(productId, currentPrice, timeframe) {
 
     const regime = regimeFast > regimeSlow ? 'BULL' : 'BEAR';
     const momentumBull = ema9 > ema21 && ema21 >= ema34;
-    const pullbackRsi = Number.isFinite(intradayRsi) && intradayRsi >= 40 && intradayRsi <= 68;
-    const nearTrend = Number.isFinite(ema21) && Math.abs(currentPrice - ema21) / ema21 < 0.008;
+    const pullbackRsi = Number.isFinite(intradayRsi)
+      && intradayRsi >= config.dayTrade.rsiMin
+      && intradayRsi <= config.dayTrade.rsiMax;
+    const nearTrend = Number.isFinite(ema21)
+      && Math.abs(currentPrice - ema21) / ema21 < config.dayTrade.trendProximityPct;
     const indicators = {
       strategyMode: 'DAY_TRADE',
-      timeframe,
+      timeframe: validatedTimeframe,
       regime,
       ema9,
       ema21,
@@ -231,10 +235,10 @@ async function generateDayTradeSignal(productId, currentPrice, timeframe) {
     log.signalGenerated(signal);
     return signal;
   } catch (err) {
-    log.error('DAY_TRADE_SIGNAL_ERROR', { productId, timeframe, error: err.message });
+    log.error('DAY_TRADE_SIGNAL_ERROR', { productId, timeframe: validatedTimeframe, error: err.message });
     return _waitSignal(productId, 'ERROR', currentPrice, {
       strategyMode: 'DAY_TRADE',
-      timeframe,
+      timeframe: validatedTimeframe,
       regime: 'UNKNOWN',
     });
   }

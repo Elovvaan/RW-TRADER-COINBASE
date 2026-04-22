@@ -116,6 +116,36 @@ function setControlState(next) {
   return getControlState();
 }
 
+function getPositionsPayload() {
+  const now = Date.now();
+  const state = portfolio.snapshot();
+  const { cryptoPositions } = syncUnifiedPositionRegistry();
+  const positions = cryptoPositions;
+
+  if (now - _lastUiRefreshTickLogAt >= 15000) {
+    _lastUiRefreshTickLogAt = now;
+    log.info('UI_REFRESH_TICK', {
+      endpoint: '/positions',
+      openPositions: positions.length,
+      wsConnected: _agent?.feed?.connected ?? false,
+      refreshedAt: new Date(now).toISOString(),
+    });
+  }
+
+  return {
+    ...state,
+    positions,
+    wsConnected: _agent?.feed?.connected ?? false,
+    ts: new Date(now).toISOString(),
+  };
+}
+
+async function serveDashboardPage(res) {
+  const { getDashboardHTML } = await import('./ui.js');
+  res.writeHead(200, { 'Content-Type': 'text/html' });
+  res.end(getDashboardHTML());
+}
+
 function json(res, status, data) {
   const body = JSON.stringify(data, null, 2);
   res.writeHead(status, {
@@ -211,39 +241,10 @@ const routes = {
   },
 
   'GET /positions/data': async (_req, res) => {
-    const now = Date.now();
-    const state = portfolio.snapshot();
-    const { cryptoPositions } = syncUnifiedPositionRegistry();
-    const positions = cryptoPositions;
-
-    if (now - _lastUiRefreshTickLogAt >= 15000) {
-      _lastUiRefreshTickLogAt = now;
-      log.info('UI_REFRESH_TICK', {
-        endpoint: '/positions',
-        openPositions: positions.length,
-        wsConnected: _agent?.feed?.connected ?? false,
-        refreshedAt: new Date(now).toISOString(),
-      });
-    }
-
-    json(res, 200, {
-      ...state,
-      positions,
-      wsConnected: _agent?.feed?.connected ?? false,
-      ts: new Date(now).toISOString(),
-    });
+    json(res, 200, getPositionsPayload());
   },
   'GET /api/positions': async (_req, res) => {
-    const now = Date.now();
-    const state = portfolio.snapshot();
-    const { cryptoPositions } = syncUnifiedPositionRegistry();
-    const positions = cryptoPositions;
-    json(res, 200, {
-      ...state,
-      positions,
-      wsConnected: _agent?.feed?.connected ?? false,
-      ts: new Date(now).toISOString(),
-    });
+    json(res, 200, getPositionsPayload());
   },
 
   'GET /unified/dashboard': async (_req, res) => {
@@ -369,29 +370,19 @@ const routes = {
     res.end();
   },
   'GET /home': async (_req, res) => {
-    const { getDashboardHTML } = await import('./ui.js');
-    res.writeHead(200, { 'Content-Type': 'text/html' });
-    res.end(getDashboardHTML());
+    await serveDashboardPage(res);
   },
   'GET /markets': async (_req, res) => {
-    const { getDashboardHTML } = await import('./ui.js');
-    res.writeHead(200, { 'Content-Type': 'text/html' });
-    res.end(getDashboardHTML());
+    await serveDashboardPage(res);
   },
   'GET /chart': async (_req, res) => {
-    const { getDashboardHTML } = await import('./ui.js');
-    res.writeHead(200, { 'Content-Type': 'text/html' });
-    res.end(getDashboardHTML());
+    await serveDashboardPage(res);
   },
   'GET /positions': async (_req, res) => {
-    const { getDashboardHTML } = await import('./ui.js');
-    res.writeHead(200, { 'Content-Type': 'text/html' });
-    res.end(getDashboardHTML());
+    await serveDashboardPage(res);
   },
   'GET /control': async (_req, res) => {
-    const { getDashboardHTML } = await import('./ui.js');
-    res.writeHead(200, { 'Content-Type': 'text/html' });
-    res.end(getDashboardHTML());
+    await serveDashboardPage(res);
   },
 };
 
