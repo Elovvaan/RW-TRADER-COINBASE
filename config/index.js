@@ -45,6 +45,8 @@ export const config = {
   // Operational mode
   dryRun: parseBool('DRY_RUN', true),
   authority: optionalEnv('AUTHORITY', 'ASSIST'), // OFF | ASSIST | AUTO
+  scanIntervalMs: parseInt_('SCAN_INTERVAL_MS', 60000),
+  signalConfidenceThreshold: parseFloat_('SIGNAL_CONFIDENCE_THRESHOLD', 0),
 
   // Trading universe
   tradingPairs: optionalEnv('TRADING_PAIRS', 'BTC-USD,ETH-USD,SOL-USD')
@@ -81,6 +83,14 @@ config.hasCoinbaseCredentials = Boolean(config.cbApiKeyName && config.cbApiPriva
 // Validate authority value
 if (!['OFF', 'ASSIST', 'AUTO'].includes(config.authority)) {
   throw new Error(`[CONFIG] AUTHORITY must be OFF, ASSIST, or AUTO. Got: "${config.authority}"`);
+}
+
+if (config.scanIntervalMs <= 0) {
+  throw new Error(`[CONFIG] SCAN_INTERVAL_MS must be > 0. Got: "${config.scanIntervalMs}"`);
+}
+
+if (config.signalConfidenceThreshold < 0 || config.signalConfidenceThreshold > 1) {
+  throw new Error(`[CONFIG] SIGNAL_CONFIDENCE_THRESHOLD must be between 0 and 1. Got: "${config.signalConfidenceThreshold}"`);
 }
 
 // Safety: AUTO only allowed when DRY_RUN is explicitly false
