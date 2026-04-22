@@ -154,16 +154,22 @@ class PortfolioState {
 
   // ── Cooldowns ─────────────────────────────────────────────────────────────
 
-  isInCooldown(productId) {
+  isInCooldown(productId, cooldownOverrideMs = null) {
     const ts = this.stopCooldowns.get(productId);
     if (!ts) return false;
-    return Date.now() - ts < config.risk.cooldownAfterStopMs;
+    const cooldownMs = Number.isFinite(Number(cooldownOverrideMs))
+      ? Number(cooldownOverrideMs)
+      : config.risk.cooldownAfterStopMs;
+    return Date.now() - ts < cooldownMs;
   }
 
-  cooldownRemaining(productId) {
+  cooldownRemaining(productId, cooldownOverrideMs = null) {
     const ts = this.stopCooldowns.get(productId);
     if (!ts) return 0;
-    return Math.max(0, config.risk.cooldownAfterStopMs - (Date.now() - ts));
+    const cooldownMs = Number.isFinite(Number(cooldownOverrideMs))
+      ? Number(cooldownOverrideMs)
+      : config.risk.cooldownAfterStopMs;
+    return Math.max(0, cooldownMs - (Date.now() - ts));
   }
 
   // ── Snapshot ──────────────────────────────────────────────────────────────

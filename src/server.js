@@ -79,6 +79,7 @@ function getControlState() {
   return {
     cryptoAutoEnabled: config.cryptoAutoEnabled,
     stockPaperEnabled: config.stockPaperEnabled,
+    strategyMode: config.strategyMode,
     authority: config.authority,
     globalKillSwitch: getKillSwitch(),
   };
@@ -99,6 +100,13 @@ function setControlState(next) {
       throw new Error('authority must be OFF, ASSIST, or AUTO');
     }
     config.authority = authority;
+  }
+  if (typeof next.strategyMode === 'string') {
+    const strategyMode = String(next.strategyMode).toUpperCase();
+    if (!['SWING', 'DAY_TRADE'].includes(strategyMode)) {
+      throw new Error('strategyMode must be SWING or DAY_TRADE');
+    }
+    config.strategyMode = strategyMode;
   }
   if (typeof next.globalKillSwitch === 'boolean') {
     config.globalKillSwitch = next.globalKillSwitch;
@@ -202,7 +210,7 @@ const routes = {
     }
   },
 
-  'GET /positions': async (_req, res) => {
+  'GET /positions/data': async (_req, res) => {
     const now = Date.now();
     const state = portfolio.snapshot();
     const { cryptoPositions } = syncUnifiedPositionRegistry();
@@ -225,6 +233,18 @@ const routes = {
       ts: new Date(now).toISOString(),
     });
   },
+  'GET /api/positions': async (_req, res) => {
+    const now = Date.now();
+    const state = portfolio.snapshot();
+    const { cryptoPositions } = syncUnifiedPositionRegistry();
+    const positions = cryptoPositions;
+    json(res, 200, {
+      ...state,
+      positions,
+      wsConnected: _agent?.feed?.connected ?? false,
+      ts: new Date(now).toISOString(),
+    });
+  },
 
   'GET /unified/dashboard': async (_req, res) => {
     try {
@@ -238,6 +258,7 @@ const routes = {
 
       const { cryptoPositions, stockPositions, all } = syncUnifiedPositionRegistry();
       const latestSignals = _agent ? _agent.getSignals() : [];
+      const cryptoDecisions = _agent ? _agent.getCryptoDecisions() : [];
       const unrealizedCryptoPnl = cryptoPositions.reduce((sum, position) => sum + Number(position.unrealizedPnL || 0), 0);
       const unrealizedStockPnl = stockPositions.reduce((sum, position) => sum + Number(position.unrealizedPnL || 0), 0);
 
@@ -268,6 +289,7 @@ const routes = {
           paperFills: stockFills,
         },
         signals: latestSignals,
+        cryptoDecisions,
         positions: {
           realCrypto: cryptoPositions,
           paperStocks: stockPositions,
@@ -279,7 +301,10 @@ const routes = {
     }
   },
 
-  'GET /control': async (_req, res) => {
+  'GET /control/state': async (_req, res) => {
+    json(res, 200, getControlState());
+  },
+  'GET /api/control': async (_req, res) => {
     json(res, 200, getControlState());
   },
 
@@ -289,6 +314,7 @@ const routes = {
       const nextState = setControlState({
         cryptoAutoEnabled: typeof body.cryptoAutoEnabled === 'boolean' ? body.cryptoAutoEnabled : undefined,
         stockPaperEnabled: typeof body.stockPaperEnabled === 'boolean' ? body.stockPaperEnabled : undefined,
+        strategyMode: body.strategyMode,
         authority: body.authority,
         globalKillSwitch: typeof body.globalKillSwitch === 'boolean' ? body.globalKillSwitch : undefined,
       });
@@ -339,6 +365,30 @@ const routes = {
 
   // Serve dashboard UI
   'GET /': async (_req, res) => {
+    res.writeHead(302, { Location: '/home' });
+    res.end();
+  },
+  'GET /home': async (_req, res) => {
+    const { getDashboardHTML } = await import('./ui.js');
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end(getDashboardHTML());
+  },
+  'GET /markets': async (_req, res) => {
+    const { getDashboardHTML } = await import('./ui.js');
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end(getDashboardHTML());
+  },
+  'GET /chart': async (_req, res) => {
+    const { getDashboardHTML } = await import('./ui.js');
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end(getDashboardHTML());
+  },
+  'GET /positions': async (_req, res) => {
+    const { getDashboardHTML } = await import('./ui.js');
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end(getDashboardHTML());
+  },
+  'GET /control': async (_req, res) => {
     const { getDashboardHTML } = await import('./ui.js');
     res.writeHead(200, { 'Content-Type': 'text/html' });
     res.end(getDashboardHTML());

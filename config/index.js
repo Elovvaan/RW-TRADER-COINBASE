@@ -63,6 +63,7 @@ export const config = {
   // Operational mode
   dryRun: parseBool('DRY_RUN', true),
   authority: optionalEnv('AUTHORITY', 'ASSIST'), // OFF | ASSIST | AUTO
+  strategyMode: optionalEnv('STRATEGY_MODE', 'SWING').toUpperCase(), // SWING | DAY_TRADE
   scanIntervalMs: parseInt_('SCAN_INTERVAL_MS', 60000),
   signalConfidenceThreshold: parseFloat_('SIGNAL_CONFIDENCE_THRESHOLD', 0),
   cryptoAutoEnabled: parseBoolAliases(['CRYPTO_AUTO_ENABLED', 'ENABLE_CRYPTO'], true),
@@ -114,6 +115,17 @@ export const config = {
     stockAllowPyramiding: parseBool('STOCK_ALLOW_PYRAMIDING', false),
   },
 
+  dayTrade: {
+    scanIntervalMs: parseInt_('DAY_TRADE_SCAN_INTERVAL_MS', 15000),
+    defaultTimeframe: optionalEnv('DAY_TRADE_TIMEFRAME', '1m'),
+    takeProfitPct: parseFloat_('DAY_TRADE_TAKE_PROFIT_PCT', 0.012),
+    stopLossPct: parseFloat_('DAY_TRADE_STOP_LOSS_PCT', 0.006),
+    maxTradesPerSession: parseInt_('DAY_TRADE_MAX_TRADES_PER_SESSION', 12),
+    maxOpenPositions: parseInt_('DAY_TRADE_MAX_OPEN_POSITIONS', 2),
+    cooldownAfterStopMs: parseInt_('DAY_TRADE_COOLDOWN_AFTER_STOP_MS', 1800000),
+    sessionDurationMs: parseInt_('DAY_TRADE_SESSION_DURATION_MS', 28800000),
+  },
+
   // Stock broker adapter
   stockBroker: {
     name: optionalEnv('STOCK_BROKER_NAME', 'paper-stock'),
@@ -133,6 +145,10 @@ config.hasCoinbaseCredentials = Boolean(config.cbApiKeyName && config.cbApiPriva
 // Validate authority value
 if (!['OFF', 'ASSIST', 'AUTO'].includes(config.authority)) {
   throw new Error(`[CONFIG] AUTHORITY must be OFF, ASSIST, or AUTO. Got: "${config.authority}"`);
+}
+
+if (!['SWING', 'DAY_TRADE'].includes(config.strategyMode)) {
+  throw new Error(`[CONFIG] STRATEGY_MODE must be SWING or DAY_TRADE. Got: "${config.strategyMode}"`);
 }
 
 if (config.scanIntervalMs <= 0) {

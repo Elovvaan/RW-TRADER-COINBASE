@@ -97,6 +97,9 @@ export function getDashboardHTML() {
     cursor:pointer;
     font-size:12px;
     letter-spacing:.02em;
+    text-decoration:none;
+    display:inline-flex;
+    align-items:center;
   }
   .tab-btn.active {
     border-color:var(--accent);
@@ -311,16 +314,17 @@ export function getDashboardHTML() {
       <div class="pill"><span class="dot" id="dot-stocks"></span><span>Stocks</span><b id="top-stocks">PAPER OFF</b></div>
       <div class="pill"><span>Authority</span><b id="top-authority">ASSIST</b></div>
       <div class="pill"><span class="dot" id="dot-kill"></span><span>Kill</span><b id="top-kill">CLEAR</b></div>
+      <div class="pill"><span>Mode</span><b id="top-mode">SWING</b></div>
       <div class="pill"><span>Selected</span><b id="top-symbol">BTC-USD</b></div>
     </div>
   </section>
 
   <section class="card tabs" id="main-tabs">
-    <button class="tab-btn active" data-tab="home">Home</button>
-    <button class="tab-btn" data-tab="markets">Markets</button>
-    <button class="tab-btn" data-tab="chart">Chart</button>
-    <button class="tab-btn" data-tab="positions">Positions</button>
-    <button class="tab-btn" data-tab="control">Control</button>
+    <a class="tab-btn active route-link" data-route="home" href="/home">Home</a>
+    <a class="tab-btn route-link" data-route="markets" href="/markets">Markets</a>
+    <a class="tab-btn route-link" data-route="chart" href="/chart">Chart</a>
+    <a class="tab-btn route-link" data-route="positions" href="/positions">Positions</a>
+    <a class="tab-btn route-link" data-route="control" href="/control">Control</a>
   </section>
 
   <section class="card" style="min-height:0;">
@@ -373,6 +377,14 @@ export function getDashboardHTML() {
             <div class="kv"><span class="k">Crypto unrealized</span><span class="mono" id="pnl-crypto">$0.00</span></div>
             <div class="kv"><span class="k">Stocks unrealized</span><span class="mono" id="pnl-stocks">$0.00</span></div>
             <div class="kv"><span class="k">Crypto realized</span><span class="mono" id="pnl-realized">$0.00</span></div>
+          </div>
+        </div>
+        <div class="panel" style="margin-top:10px;">
+          <p class="section-title">Top Crypto Decision Transparency</p>
+          <div class="grid three-col">
+            <div class="kv"><span class="k">BTC-USD</span><span id="skip-btc">WAIT</span></div>
+            <div class="kv"><span class="k">ETH-USD</span><span id="skip-eth">WAIT</span></div>
+            <div class="kv"><span class="k">SOL-USD</span><span id="skip-sol">WAIT</span></div>
           </div>
         </div>
       </div>
@@ -454,6 +466,7 @@ export function getDashboardHTML() {
             <div class="kv"><span class="k">Entry / TP / SL</span><span id="chart-detail-risk">—</span></div>
             <div class="kv"><span class="k">Position</span><span id="chart-detail-position">Flat</span></div>
             <div class="kv"><span class="k">Mode</span><span id="chart-detail-mode">Autonomous-first</span></div>
+            <div class="kv"><span class="k">Regime</span><span id="chart-detail-regime">—</span></div>
 
             <div class="control-grid" style="margin-top:10px;">
               <button id="manual-buy" class="btn-safe">Buy (manual override)</button>
@@ -497,6 +510,10 @@ export function getDashboardHTML() {
               <button class="btn-danger" id="control-crypto-off">Crypto Live OFF</button>
               <button class="btn-safe" id="control-stocks-on">Stocks Paper ON</button>
               <button class="btn-danger" id="control-stocks-off">Stocks Paper OFF</button>
+              <select id="strategy-mode-select" class="full">
+                <option value="SWING">Mode SWING</option>
+                <option value="DAY_TRADE">Mode DAY_TRADE</option>
+              </select>
               <select id="authority-select" class="full">
                 <option value="OFF">Authority OFF</option>
                 <option value="ASSIST">Authority ASSIST</option>
@@ -548,6 +565,21 @@ export function getDashboardHTML() {
   const FAVORITES = ['BTC-USD','ETH-USD','SOL-USD','AAPL','TSLA'];
   const ALL_SYMBOLS = TOP_CRYPTO.concat(TOP_STOCKS.filter(function(s) { return !TOP_CRYPTO.includes(s); }));
   const CRYPTO_SET = new Set(TOP_CRYPTO);
+  const ROUTE_BY_TAB = {
+    home: '/home',
+    markets: '/markets',
+    chart: '/chart',
+    positions: '/positions',
+    control: '/control',
+  };
+  const TAB_BY_ROUTE = {
+    '/': 'home',
+    '/home': 'home',
+    '/markets': 'markets',
+    '/chart': 'chart',
+    '/positions': 'positions',
+    '/control': 'control',
+  };
   const EMPTY_VALUE = '—';
   const DEFAULT_REFRESH_INTERVAL_MS = 5000;
   const MAX_LOG_ENTRIES = 70;
@@ -573,6 +605,7 @@ export function getDashboardHTML() {
 
   const state = {
     activeTab: 'home',
+    strategyMode: 'SWING',
     selectedSymbol: 'BTC-USD',
     timeframe: '1m',
     indicatorsOn: true,
@@ -582,6 +615,7 @@ export function getDashboardHTML() {
     orders: [],
     positions: [],
     signals: [],
+    cryptoDecisions: [],
     fills: [],
     watch: new Map(),
     prevPrices: new Map(),
@@ -649,6 +683,17 @@ export function getDashboardHTML() {
   }
   function symbolPosition(symbol) {
     return state.positions.find(function(p) { return p.symbol === symbol; }) || null;
+  }
+  function symbolDecision(symbol) {
+    return state.cryptoDecisions.find(function(d) { return d.symbol === symbol || d.productId === symbol; }) || null;
+  }
+  function signalOrSkipBadge(symbol, side) {
+    const normalizedSide = String(side || 'WAIT').toUpperCase();
+    if (normalizedSide !== 'WAIT') return sideBadge(normalizedSide);
+    const decision = symbolDecision(symbol);
+    const skipReason = decision && (decision.skipReason || decision.status);
+    if (!skipReason) return sideBadge('WAIT');
+    return '<span class=\"badge badge-wait\">' + String(skipReason).replaceAll('_', ' ') + '</span>';
   }
   function getSymbolPrice(symbol) {
     const pos = symbolPosition(symbol);
@@ -720,14 +765,21 @@ export function getDashboardHTML() {
     return out.slice(-MAX_DISPLAY_CANDLES);
   }
 
-  function setActiveTab(tab) {
-    state.activeTab = tab;
-    Array.from(document.querySelectorAll('.tab-btn')).forEach(function(btn) {
-      btn.classList.toggle('active', btn.getAttribute('data-tab') === tab);
+  function setActiveTab(tab, pushHistory) {
+    const target = ROUTE_BY_TAB[tab] ? tab : 'home';
+    state.activeTab = target;
+    Array.from(document.querySelectorAll('.route-link')).forEach(function(btn) {
+      btn.classList.toggle('active', btn.getAttribute('data-route') === target);
     });
     Array.from(document.querySelectorAll('.tab-panel')).forEach(function(panel) {
-      panel.classList.toggle('active', panel.id === 'tab-' + tab);
+      panel.classList.toggle('active', panel.id === 'tab-' + target);
     });
+    if (pushHistory) {
+      const nextPath = ROUTE_BY_TAB[target] || '/home';
+      if (window.location.pathname !== nextPath) {
+        window.history.pushState({ tab: target }, '', nextPath);
+      }
+    }
   }
 
   function selectSymbol(symbol, forceChartTab) {
@@ -802,6 +854,7 @@ export function getDashboardHTML() {
     document.getElementById('top-stocks').textContent = control.stockPaperEnabled ? 'PAPER ON' : 'PAPER OFF';
     document.getElementById('top-authority').textContent = control.authority || 'ASSIST';
     document.getElementById('top-kill').textContent = control.globalKillSwitch ? 'ARMED' : 'CLEAR';
+    document.getElementById('top-mode').textContent = control.strategyMode || state.strategyMode || 'SWING';
     document.getElementById('top-updated').textContent = new Date().toLocaleTimeString();
 
     document.getElementById('dot-crypto').className = 'dot ' + (control.cryptoAutoEnabled ? 'ok' : 'bad');
@@ -809,8 +862,10 @@ export function getDashboardHTML() {
     document.getElementById('dot-kill').className = 'dot ' + (control.globalKillSwitch ? 'bad' : 'ok');
 
     const authority = control.authority || 'ASSIST';
+    state.strategyMode = String(control.strategyMode || state.strategyMode || 'SWING').toUpperCase();
     const manualAllowed = authority !== 'OFF';
     document.getElementById('authority-select').value = authority;
+    document.getElementById('strategy-mode-select').value = state.strategyMode;
     document.getElementById('manual-buy').disabled = !manualAllowed;
     document.getElementById('manual-sell').disabled = !manualAllowed;
     document.getElementById('manual-close').disabled = !manualAllowed;
@@ -884,6 +939,13 @@ export function getDashboardHTML() {
       '</tr>';
     }).join('');
     document.getElementById('home-fills-body').innerHTML = fillRows || '<tr><td colspan="6" class="neutral">No recent fills</td></tr>';
+
+    const btcDecision = symbolDecision('BTC-USD');
+    const ethDecision = symbolDecision('ETH-USD');
+    const solDecision = symbolDecision('SOL-USD');
+    document.getElementById('skip-btc').innerHTML = signalOrSkipBadge('BTC-USD', btcDecision?.signalSide || 'WAIT');
+    document.getElementById('skip-eth').innerHTML = signalOrSkipBadge('ETH-USD', ethDecision?.signalSide || 'WAIT');
+    document.getElementById('skip-sol').innerHTML = signalOrSkipBadge('SOL-USD', solDecision?.signalSide || 'WAIT');
   }
 
   function renderMarketsTableRows(symbols) {
@@ -893,7 +955,7 @@ export function getDashboardHTML() {
         '<td><div style="display:flex;gap:6px;align-items:center;">' + typeBadge(symbol) + '<b>' + symbol + '</b></div></td>' +
         '<td class="num">' + (Number.isFinite(w.price) ? usd(w.price) : EMPTY_VALUE) + '</td>' +
         '<td class="num ' + clsSigned(w.movePct) + '">' + formatPercent(w.movePct) + '</td>' +
-        '<td>' + sideBadge(w.signal) + '</td>' +
+        '<td>' + signalOrSkipBadge(symbol, w.signal) + '</td>' +
       '</tr>';
     }).join('');
   }
@@ -911,10 +973,14 @@ export function getDashboardHTML() {
     const favContainer = document.getElementById('favorite-chip-list');
     favContainer.innerHTML = FAVORITES.map(function(symbol) {
       const w = state.watch.get(symbol) || { price: null, movePct: 0, signal: 'WAIT' };
+      const decision = symbolDecision(symbol);
+      const waitLabel = decision && (decision.skipReason || decision.status)
+        ? String(decision.skipReason || decision.status).replaceAll('_', ' ')
+        : 'WAIT';
       return '<button class="symbol-chip ' + (state.selectedSymbol === symbol ? 'active' : '') + '" data-symbol="' + symbol + '">' +
         '<div class="top"><b>' + symbol + '</b>' + typeBadge(symbol) + '</div>' +
         '<div class="price">' + (Number.isFinite(w.price) ? usd(w.price) : EMPTY_VALUE) + '</div>' +
-        '<div class="' + clsSigned(w.movePct) + '">' + formatPercent(w.movePct) + ' · ' + String(w.signal || 'WAIT').toUpperCase() + '</div>' +
+        '<div class="' + clsSigned(w.movePct) + '">' + formatPercent(w.movePct) + ' · ' + (String(w.signal || 'WAIT').toUpperCase() === 'WAIT' ? waitLabel : String(w.signal || 'WAIT').toUpperCase()) + '</div>' +
       '</button>';
     }).join('');
 
@@ -934,7 +1000,7 @@ export function getDashboardHTML() {
     const price = getSymbolPrice(state.selectedSymbol);
     document.getElementById('market-active-symbol').textContent = state.selectedSymbol;
     document.getElementById('market-active-price').textContent = Number.isFinite(price) ? usd(price) : EMPTY_VALUE;
-    document.getElementById('market-active-signal').innerHTML = sideBadge(sig ? sig.side : 'WAIT');
+    document.getElementById('market-active-signal').innerHTML = signalOrSkipBadge(state.selectedSymbol, sig ? sig.side : 'WAIT');
     document.getElementById('market-active-pos').textContent = pos ? ('OPEN · ' + pos.side + ' · ' + usd(pos.unrealizedPnL || 0)) : 'Flat';
   }
 
@@ -952,7 +1018,9 @@ export function getDashboardHTML() {
     const side = sig ? sig.side : 'WAIT';
     const signalBadge = document.getElementById('chart-signal-badge');
     signalBadge.className = 'badge ' + (side === 'BUY' ? 'badge-buy' : side === 'SELL' ? 'badge-sell' : 'badge-wait');
-    signalBadge.textContent = side;
+    signalBadge.textContent = side === 'WAIT'
+      ? ((symbolDecision(symbol)?.skipReason || side).replaceAll('_', ' '))
+      : side;
 
     const livePrice = getSymbolPrice(symbol);
     document.getElementById('chart-live-line').textContent = 'Live: ' + (Number.isFinite(livePrice) ? usd(livePrice) : EMPTY_VALUE);
@@ -971,6 +1039,8 @@ export function getDashboardHTML() {
     document.getElementById('chart-detail-position').textContent = pos
       ? ('OPEN ' + pos.side + ' · ' + usd(pos.unrealizedPnL || 0))
       : 'Flat';
+    document.getElementById('chart-detail-mode').textContent = state.strategyMode;
+    document.getElementById('chart-detail-regime').textContent = sig?.indicators?.regime || symbolDecision(symbol)?.regime || EMPTY_VALUE;
 
     if (!candles.length) {
       svg.innerHTML =
@@ -1102,6 +1172,7 @@ export function getDashboardHTML() {
   function renderControlTab() {
     document.getElementById('auto-refresh-label').textContent = Math.round(state.refreshIntervalMs / 1000) + 's';
     document.getElementById('refresh-interval').value = String(state.refreshIntervalMs);
+    document.getElementById('strategy-mode-select').value = state.strategyMode;
     document.getElementById('control-timeframe').textContent = state.timeframe;
     document.getElementById('control-timeframe-select').value = state.timeframe;
     document.getElementById('indicator-status').textContent = state.indicatorsOn ? 'ON' : 'OFF';
@@ -1129,10 +1200,15 @@ export function getDashboardHTML() {
   }
 
   function bindTabs() {
-    Array.from(document.querySelectorAll('.tab-btn')).forEach(function(btn) {
-      btn.addEventListener('click', function() {
-        setActiveTab(btn.getAttribute('data-tab'));
+    Array.from(document.querySelectorAll('.route-link')).forEach(function(btn) {
+      btn.addEventListener('click', function(e) {
+        e.preventDefault();
+        setActiveTab(btn.getAttribute('data-route'), true);
       });
+    });
+    window.addEventListener('popstate', function() {
+      const tab = TAB_BY_ROUTE[window.location.pathname] || 'home';
+      setActiveTab(tab, false);
     });
   }
 
@@ -1192,6 +1268,11 @@ export function getDashboardHTML() {
     document.getElementById('authority-select').addEventListener('change', function(e) {
       setControl({ authority: e.target.value });
     });
+    document.getElementById('strategy-mode-select').addEventListener('change', function(e) {
+      state.strategyMode = String(e.target.value || 'SWING').toUpperCase();
+      setControl({ strategyMode: state.strategyMode });
+      renderChartTab();
+    });
     document.getElementById('control-kill-clear').addEventListener('click', function() {
       setControl({ globalKillSwitch: false });
     });
@@ -1237,6 +1318,7 @@ export function getDashboardHTML() {
 
       state.dashboard = dashboard;
       state.signals = dashboard.signals || [];
+      state.cryptoDecisions = (dashboard.cryptoDecisions || []).filter(isValidSignal);
       reconcileSignals(state.signals);
 
       const cryptoPositions = (((dashboard.realCrypto || {}).openPositions) || []).map(normalizePosition);
@@ -1264,7 +1346,7 @@ export function getDashboardHTML() {
 
   bindTabs();
   bindControls();
-  setActiveTab('home');
+  setActiveTab(TAB_BY_ROUTE[window.location.pathname] || 'home', false);
   load();
   setInterval(function() {
     const clock = document.getElementById('top-clock');

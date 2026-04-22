@@ -8,6 +8,12 @@ import { getCandles } from '../products/index.js';
 import log from '../logging/index.js';
 import config from '../../config/index.js';
 
+const DAY_TRADE_GRANULARITY = {
+  '1m': 'ONE_MINUTE',
+  '5m': 'FIVE_MINUTE',
+  '15m': 'FIFTEEN_MINUTE',
+};
+
 // ── Indicator helpers ─────────────────────────────────────────────────────────
 
 function ema(closes, period) {
@@ -54,7 +60,16 @@ function atr(candles, period = 14) {
  * { productId, action: 'BUY'|'WAIT'|'SELL', confidence, reason,
  *   entryPrice, tpPrice, slPrice, indicators }
  */
-export async function generateSignal(productId, currentPrice) {
+export async function generateSignal(productId, currentPrice, options = {}) {
+  const mode = String(options.mode || config.strategyMode || 'SWING').toUpperCase();
+  const timeframe = options.timeframe || config.dayTrade.defaultTimeframe || '1m';
+  if (mode === 'DAY_TRADE') {
+    return generateDayTradeSignal(productId, currentPrice, timeframe);
+  }
+  return generateSwingSignal(productId, currentPrice);
+}
+
+async function generateSwingSignal(productId, currentPrice) {
   try {
     const now = Math.floor(Date.now() / 1000);
 
@@ -127,16 +142,101 @@ export async function generateSignal(productId, currentPrice) {
         ts: Date.now(),
       };
 
+      signal.indicators.regime = trend1d === 'UP' ? 'BULL' : 'BEAR';
+      signal.indicators.strategyMode = 'SWING';
       log.signalGenerated(signal);
       return signal;
     }
 
     // ── Downtrend: no entry, wait ─────────────────────────────────────────────
-    return _waitSignal(productId, trend1d === 'DOWN' ? 'DOWNTREND' : 'NO_SETUP', currentPrice, indicators);
+    return _waitSignal(productId, trend1d === 'DOWN' ? 'REGIME_BLOCKED' : 'NO_SETUP', currentPrice, {
+      ...indicators,
+      regime: trend1d === 'UP' ? 'BULL' : 'BEAR',
+      strategyMode: 'SWING',
+    });
 
   } catch (err) {
     log.error('SIGNAL_ERROR', { productId, error: err.message });
     return _waitSignal(productId, 'ERROR', currentPrice);
+  }
+}
+
+async function generateDayTradeSignal(productId, currentPrice, timeframe) {
+  try {
+    const now = Math.floor(Date.now() / 1000);
+    const granularity = DAY_TRADE_GRANULARITY[timeframe] || DAY_TRADE_GRANULARITY['1m'];
+    const [intradayCandles, regimeCandles] = await Promise.all([
+      getCandles(productId, granularity, now - 86400, now),
+      getCandles(productId, 'FIFTEEN_MINUTE', now - (86400 * 3), now),
+    ]);
+
+    if (intradayCandles.length < 60 || regimeCandles.length < 60) {
+      return _waitSignal(productId, 'NO_SETUP', currentPrice, {
+        strategyMode: 'DAY_TRADE',
+        timeframe,
+        regime: 'UNKNOWN',
+      });
+    }
+
+    intradayCandles.sort((a, b) => a.time - b.time);
+    regimeCandles.sort((a, b) => a.time - b.time);
+    const closes = intradayCandles.map((c) => c.close);
+    const regimeCloses = regimeCandles.map((c) => c.close);
+
+    const ema9 = ema(closes, 9);
+    const ema21 = ema(closes, 21);
+    const ema34 = ema(closes, 34);
+    const regimeFast = ema(regimeCloses, 21);
+    const regimeSlow = ema(regimeCloses, 55);
+    const intradayRsi = rsi(closes, 14);
+    const intradayAtr = atr(intradayCandles, 14);
+
+    const regime = regimeFast > regimeSlow ? 'BULL' : 'BEAR';
+    const momentumBull = ema9 > ema21 && ema21 >= ema34;
+    const pullbackRsi = Number.isFinite(intradayRsi) && intradayRsi >= 40 && intradayRsi <= 68;
+    const nearTrend = Number.isFinite(ema21) && Math.abs(currentPrice - ema21) / ema21 < 0.008;
+    const indicators = {
+      strategyMode: 'DAY_TRADE',
+      timeframe,
+      regime,
+      ema9,
+      ema21,
+      ema34,
+      regimeFast,
+      regimeSlow,
+      intradayRsi,
+      intradayAtr,
+      currentPrice,
+      cooldownAfterStopMs: config.dayTrade.cooldownAfterStopMs,
+    };
+
+    if (regime !== 'BULL') {
+      return _waitSignal(productId, 'REGIME_BLOCKED', currentPrice, indicators);
+    }
+    if (!momentumBull || !pullbackRsi || !nearTrend) {
+      return _waitSignal(productId, 'NO_SETUP', currentPrice, indicators);
+    }
+
+    const signal = {
+      productId,
+      action: 'BUY',
+      confidence: _dayTradeConfidence({ intradayRsi, ema9, ema21, ema34, regimeFast, regimeSlow }),
+      reason: 'DAY_TRADE_PULLBACK',
+      entryPrice: currentPrice,
+      tpPrice: currentPrice * (1 + config.dayTrade.takeProfitPct),
+      slPrice: currentPrice * (1 - config.dayTrade.stopLossPct),
+      indicators,
+      ts: Date.now(),
+    };
+    log.signalGenerated(signal);
+    return signal;
+  } catch (err) {
+    log.error('DAY_TRADE_SIGNAL_ERROR', { productId, timeframe, error: err.message });
+    return _waitSignal(productId, 'ERROR', currentPrice, {
+      strategyMode: 'DAY_TRADE',
+      timeframe,
+      regime: 'UNKNOWN',
+    });
   }
 }
 
@@ -156,6 +256,18 @@ function _confidence(rsi4h, ema9, ema21, ema21_1d, ema55_1d) {
   if ((ema21_1d - ema55_1d) / ema55_1d > 0.02) score += 0.40;
   else score += 0.20;
   return Math.min(1, parseFloat(score.toFixed(2)));
+}
+
+function _dayTradeConfidence({ intradayRsi, ema9, ema21, ema34, regimeFast, regimeSlow }) {
+  let score = 0;
+  if (intradayRsi >= 45 && intradayRsi <= 62) score += 0.35;
+  else score += 0.15;
+  if ((ema9 - ema21) / Math.max(ema21, 1) > 0.0012) score += 0.30;
+  else score += 0.12;
+  if ((regimeFast - regimeSlow) / Math.max(regimeSlow, 1) > 0.003) score += 0.25;
+  else score += 0.12;
+  if (ema21 >= ema34) score += 0.10;
+  return Math.min(1, Number(score.toFixed(2)));
 }
 
 /**
