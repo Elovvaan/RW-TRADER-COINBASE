@@ -38,9 +38,9 @@ export async function runStartupValidation() {
   }
 
   const autonomy = getAutonomyStatus({ includeRuntimeKillSwitch: false });
-  if (!autonomy.autonomousTradingReady) {
-    log.warn('STARTUP_AUTONOMY_BLOCKERS', { blockers: autonomy.blockers });
-    warnings.push(`Autonomous trading blocked: ${autonomy.blockers.join('; ')}`);
+  if (!autonomy.anyMarketReady) {
+    log.warn('STARTUP_AUTONOMY_BLOCKERS', { blockers: autonomy.blockers, markets: autonomy.markets });
+    warnings.push('Autonomous trading blocked for all markets.');
   }
 
   // ── 2. Credential validation ───────────────────────────────────────────────
