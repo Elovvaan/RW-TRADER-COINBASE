@@ -38,13 +38,15 @@ export class TradingAgent {
       stockSymbols: config.stockSymbols,
       enableCrypto: config.enableCrypto,
       enableEquities: config.enableEquities,
+      cryptoAutoEnabled: config.cryptoAutoEnabled,
+      stockPaperEnabled: config.stockPaperEnabled,
       authority: config.authority,
       dryRun: config.dryRun,
       scanIntervalMs: config.scanIntervalMs,
       signalConfidenceThreshold: config.signalConfidenceThreshold,
     });
 
-    if (config.enableCrypto) {
+    if (config.cryptoAutoEnabled) {
       // Keep position telemetry synced to incoming market ticks
       this.feed.on('ticker', this._onTicker);
       await this.feed.start();
@@ -72,7 +74,7 @@ export class TradingAgent {
     this.running = false;
     clearInterval(this._signalTimer);
     clearInterval(this._exitTimer);
-    if (config.enableCrypto) {
+    if (config.cryptoAutoEnabled) {
       this.feed.off('ticker', this._onTicker);
       this.feed.stop();
     }
@@ -134,26 +136,14 @@ export class TradingAgent {
     try {
       const priceMap = this._buildPriceMap();
 
+      if (!config.cryptoAutoEnabled) {
+        log.info('CRYPTO_ENGINE_DISABLED', { trigger, reason: 'CRYPTO_AUTO_DISABLED' });
+      }
       for (const productId of config.tradingPairs) {
-        if (!config.enableCrypto) break;
+        if (!config.cryptoAutoEnabled) break;
 
         if (getKillSwitch()) {
           log.info('SIGNAL_SKIPPED', { trigger, productId, reason: 'KILL_SWITCH_ACTIVE' });
-          continue;
-        }
-
-        // Skip if position already open
-        if (portfolio.hasPosition(productId)) {
-          summary.pairsEvaluated += 1;
-          summary.skippedSignals += 1;
-          log.info('PAIR_EVALUATED', {
-            trigger,
-            scanId: summary.scanId,
-            productId,
-            action: 'SKIP',
-            reason: 'POSITION_EXISTS',
-          });
-          log.info('SIGNAL_SKIPPED', { trigger, scanId: summary.scanId, productId, reason: 'POSITION_EXISTS' });
           continue;
         }
 
@@ -237,7 +227,10 @@ export class TradingAgent {
         }
       }
 
-      if (config.enableEquities) {
+      if (!config.stockPaperEnabled) {
+        log.info('STOCK_ENGINE_DISABLED', { trigger, reason: 'STOCK_PAPER_DISABLED' });
+      }
+      if (config.stockPaperEnabled) {
         for (const symbol of config.stockSymbols) {
           const equitySignal = normalizeEquitySignal(stockAdapter.generateSignal(symbol));
           this.signals[`equities:${symbol}`] = equitySignal;
@@ -275,7 +268,7 @@ export class TradingAgent {
   async _runExitCycle() {
     if (!this.running || getKillSwitch()) return;
 
-    if (!config.enableCrypto) return;
+    if (!config.cryptoAutoEnabled) return;
 
     const positions = portfolio.getAllPositions();
     if (!positions.length) return;

@@ -43,6 +43,7 @@ function getCryptoPositions() {
       broker: 'coinbase',
       symbol: p.productId,
       market: 'crypto',
+      executionType: 'REAL',
       size: p.baseSize,
       entry: p.entryPrice,
       currentPrice: markPrice,
@@ -65,9 +66,46 @@ function getCryptoPositions() {
 function syncUnifiedPositionRegistry() {
   const cryptoPositions = getCryptoPositions();
   const stockPositions = stockAdapter.getOpenPositions();
-  unifiedPositionRegistry.syncPositions(cryptoPositions, 'coinbase');
-  unifiedPositionRegistry.syncPositions(stockPositions, stockAdapter.broker);
-  return { cryptoPositions, stockPositions, all: unifiedPositionRegistry.list() };
+  unifiedPositionRegistry.syncCryptoPositions(cryptoPositions, 'coinbase');
+  unifiedPositionRegistry.syncStockPositions(stockPositions, stockAdapter.broker);
+  return {
+    cryptoPositions: unifiedPositionRegistry.listCrypto(),
+    stockPositions: unifiedPositionRegistry.listStocks(),
+    all: unifiedPositionRegistry.listAll(),
+  };
+}
+
+function getControlState() {
+  return {
+    cryptoAutoEnabled: config.cryptoAutoEnabled,
+    stockPaperEnabled: config.stockPaperEnabled,
+    authority: config.authority,
+    globalKillSwitch: getKillSwitch(),
+  };
+}
+
+function setControlState(next) {
+  if (typeof next.cryptoAutoEnabled === 'boolean') {
+    config.cryptoAutoEnabled = next.cryptoAutoEnabled;
+    config.enableCrypto = next.cryptoAutoEnabled;
+  }
+  if (typeof next.stockPaperEnabled === 'boolean') {
+    config.stockPaperEnabled = next.stockPaperEnabled;
+    config.enableEquities = next.stockPaperEnabled;
+  }
+  if (typeof next.authority === 'string') {
+    const authority = String(next.authority).toUpperCase();
+    if (!['OFF', 'ASSIST', 'AUTO'].includes(authority)) {
+      throw new Error('authority must be OFF, ASSIST, or AUTO');
+    }
+    config.authority = authority;
+  }
+  if (typeof next.globalKillSwitch === 'boolean') {
+    config.globalKillSwitch = next.globalKillSwitch;
+    config.killSwitch = next.globalKillSwitch;
+    setKillSwitch(next.globalKillSwitch);
+  }
+  return getControlState();
 }
 
 function json(res, status, data) {
@@ -99,20 +137,18 @@ const routes = {
   'GET /health': async (_req, res) => {
     const hasCredentials = config.hasCoinbaseCredentials;
     const agentRunning = Boolean(_agent);
-    const cryptoReady = !config.enableCrypto || hasCredentials;
-    const equitiesReady = !config.enableEquities || agentRunning;
-    json(res, 200, {
-      status: agentRunning && cryptoReady && equitiesReady ? 'ok' : 'degraded',
-      ts: new Date().toISOString(),
-      dryRun: config.dryRun,
-      authority: config.authority,
-      killSwitch: getKillSwitch(),
-      pairs: config.tradingPairs,
-      wsConnected: _agent?.feed?.connected ?? false,
-      features: {
-        enableCrypto: config.enableCrypto,
-        enableEquities: config.enableEquities,
-      },
+      const cryptoReady = !config.cryptoAutoEnabled || hasCredentials;
+      const equitiesReady = !config.stockPaperEnabled || agentRunning;
+      json(res, 200, {
+        status: agentRunning && cryptoReady && equitiesReady ? 'ok' : 'degraded',
+        ts: new Date().toISOString(),
+        controls: getControlState(),
+        pairs: config.tradingPairs,
+        wsConnected: _agent?.feed?.connected ?? false,
+        features: {
+          enableCrypto: config.cryptoAutoEnabled,
+          enableEquities: config.stockPaperEnabled,
+        },
       equities: {
         broker: stockAdapter.broker,
         symbols: config.stockSymbols,
@@ -192,63 +228,91 @@ const routes = {
 
   'GET /unified/dashboard': async (_req, res) => {
     try {
-      const [cryptoBalances, stockBalances, coinbaseFills, stockFills] = await Promise.all([
-        config.enableCrypto ? getBalances() : {},
-        config.enableEquities ? stockAdapter.getBalances() : {},
-        config.enableCrypto ? coinbaseAdapter.getRecentFills(20) : [],
-        config.enableEquities ? stockAdapter.getRecentFills(20) : [],
+      const [cryptoBalances, stockBalances, coinbaseFills, stockFills, portfolioState] = await Promise.all([
+        config.cryptoAutoEnabled ? getBalances() : {},
+        config.stockPaperEnabled ? stockAdapter.getBalances() : {},
+        config.cryptoAutoEnabled ? coinbaseAdapter.getRecentFills(20) : [],
+        config.stockPaperEnabled ? stockAdapter.getRecentFills(20) : [],
+        Promise.resolve(portfolio.snapshot()),
       ]);
 
       const { cryptoPositions, stockPositions, all } = syncUnifiedPositionRegistry();
       const latestSignals = _agent ? _agent.getSignals() : [];
-      const recentFills = [...stockFills, ...coinbaseFills]
-        .sort((a, b) => new Date(b.filledAt || 0).getTime() - new Date(a.filledAt || 0).getTime())
-        .slice(0, 40);
-
-      const totalPortfolioPnl = all.reduce((sum, position) => sum + Number(position.unrealizedPnL || 0), 0);
+      const unrealizedCryptoPnl = cryptoPositions.reduce((sum, position) => sum + Number(position.unrealizedPnL || 0), 0);
+      const unrealizedStockPnl = stockPositions.reduce((sum, position) => sum + Number(position.unrealizedPnL || 0), 0);
 
       json(res, 200, {
-        system: {
+        controlPanel: {
           ts: new Date().toISOString(),
-          authority: config.authority,
-          dryRun: config.dryRun,
-          killSwitch: getKillSwitch(),
+          ...getControlState(),
+          killSwitchState: getKillSwitch() ? 'ARMED' : 'CLEAR',
           wsConnected: _agent?.feed?.connected ?? false,
-          enableCrypto: config.enableCrypto,
-          enableEquities: config.enableEquities,
         },
-        balances: {
-          crypto: cryptoBalances,
-          stocks: stockBalances,
+        realCrypto: {
+          balances: {
+            USD: cryptoBalances.USD || { available: 0, hold: 0, total: 0 },
+            BTC: cryptoBalances.BTC || { available: 0, hold: 0, total: 0 },
+            ETH: cryptoBalances.ETH || { available: 0, hold: 0, total: 0 },
+          },
+          openPositions: cryptoPositions,
+          unrealizedPnlUsd: unrealizedCryptoPnl,
+          realizedPnlUsd: Number(portfolioState.realizedPnlUsd || 0),
+          recentFills: coinbaseFills,
         },
+        simulatedStocks: {
+          balances: stockBalances,
+          paperCashUsd: Number(stockBalances.USD?.available || 0),
+          paperEquityValueUsd: Number(stockBalances.EQUITY_VALUE?.total || 0),
+          openPositions: stockPositions,
+          unrealizedPnlUsd: unrealizedStockPnl,
+          paperFills: stockFills,
+        },
+        signals: latestSignals,
         positions: {
-          crypto: cryptoPositions,
-          stocks: stockPositions,
+          realCrypto: cryptoPositions,
+          paperStocks: stockPositions,
+          all,
         },
-        latestSignals,
-        recentFills,
-        totalPortfolioPnl,
       });
     } catch (err) {
       json(res, 500, { error: err.message });
     }
   },
 
+  'GET /control': async (_req, res) => {
+    json(res, 200, getControlState());
+  },
+
+  'POST /control': async (req, res) => {
+    try {
+      const body = await readBody(req);
+      const nextState = setControlState({
+        cryptoAutoEnabled: typeof body.cryptoAutoEnabled === 'boolean' ? body.cryptoAutoEnabled : undefined,
+        stockPaperEnabled: typeof body.stockPaperEnabled === 'boolean' ? body.stockPaperEnabled : undefined,
+        authority: body.authority,
+        globalKillSwitch: typeof body.globalKillSwitch === 'boolean' ? body.globalKillSwitch : undefined,
+      });
+      log.info('CONTROL_PANEL_UPDATED', nextState);
+      json(res, 200, nextState);
+    } catch (err) {
+      json(res, 400, { error: err.message });
+    }
+  },
+
   'GET /kill-switch': async (_req, res) => {
-    json(res, 200, { killSwitch: getKillSwitch() });
+    json(res, 200, { globalKillSwitch: getKillSwitch() });
   },
 
   'POST /kill-switch': async (req, res) => {
     const body   = await readBody(req);
     const active = body.active === true || body.active === 'true';
-    setKillSwitch(active);
-    json(res, 200, { killSwitch: getKillSwitch(), ts: new Date().toISOString() });
+    const nextState = setControlState({ globalKillSwitch: active });
+    json(res, 200, { ...nextState, ts: new Date().toISOString() });
   },
 
   'GET /mode': async (_req, res) => {
     json(res, 200, {
       authority: config.authority,
-      dryRun:   config.dryRun,
     });
   },
 
@@ -259,12 +323,9 @@ const routes = {
     if (!allowed.includes(body.authority)) {
       return json(res, 400, { error: `authority must be one of: ${allowed.join(', ')}` });
     }
-    if (body.authority === 'AUTO' && config.dryRun) {
-      return json(res, 400, { error: 'Cannot set AUTO while DRY_RUN=true. Restart with DRY_RUN=false.' });
-    }
-    config.authority = body.authority;
+    const nextState = setControlState({ authority: body.authority });
     log.info('AUTHORITY_CHANGED', { authority: config.authority });
-    json(res, 200, { authority: config.authority });
+    json(res, 200, { authority: nextState.authority });
   },
 
   'DELETE /orders': async (_req, res) => {

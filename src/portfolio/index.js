@@ -12,6 +12,7 @@ class PortfolioState {
   constructor() {
     this.positions = new Map();     // productId → position
     this.dailyLossUsd = 0;
+    this.realizedPnlUsd = 0;
     this.dailyLossResetAt = _todayMidnight();
     this.stopCooldowns = new Map(); // productId → timestamp of last stop-out
   }
@@ -27,6 +28,7 @@ class PortfolioState {
       markPrice: pos.entryPrice,
       lastPrice: pos.entryPrice,
       unrealizedPnlUsd: 0,
+      executionType: 'REAL',
       lastMarketUpdateTs: openedAt,
       lastPnlUpdateTs: openedAt,
     };
@@ -48,6 +50,7 @@ class PortfolioState {
 
     const realizedPnl = _calculateUnrealizedPnl(pos, exitPrice);
     this.positions.delete(productId);
+    this.realizedPnlUsd += realizedPnl;
 
     if (realizedPnl < 0) {
       this._accumulateDailyLoss(Math.abs(realizedPnl));
@@ -169,6 +172,7 @@ class PortfolioState {
     return {
       positions:    this.getAllPositions(),
       dailyLossUsd: this.getDailyLoss(),
+      realizedPnlUsd: this.realizedPnlUsd,
       cooldowns:    Object.fromEntries(
         Array.from(this.stopCooldowns.entries()).map(([k, v]) => [k, {
           since: new Date(v).toISOString(),

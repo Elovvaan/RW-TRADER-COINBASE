@@ -25,6 +25,10 @@ export class StockAdapter {
     this.lastQuotes = new Map();
   }
 
+  hasPosition(symbol) {
+    return this.positions.has(symbol);
+  }
+
   _todayMidnight() {
     const d = new Date();
     d.setUTCHours(0, 0, 0, 0);
@@ -124,6 +128,7 @@ export class StockAdapter {
   }
 
   getOpenPositions() {
+    const now = Date.now();
     const open = [];
     for (const position of this.positions.values()) {
       const quote = this.getQuote(position.symbol);
@@ -137,9 +142,12 @@ export class StockAdapter {
         entry: position.entry,
         currentPrice,
         unrealizedPnL,
+        executionType: 'PAPER',
         tp: position.tp,
         sl: position.sl,
         openedAt: position.openedAt,
+        positionAgeMs: Number.isFinite(position.openedAt) ? Math.max(0, now - position.openedAt) : null,
+        lastMarketUpdateTs: quote.ts,
       });
     }
     return open;
@@ -187,6 +195,7 @@ export class StockAdapter {
         entry: executionPrice,
         currentPrice: executionPrice,
         unrealizedPnL: 0,
+        executionType: 'PAPER',
         tp: signal.tp,
         sl: signal.sl,
         openedAt: Date.now(),

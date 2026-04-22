@@ -1,4 +1,5 @@
 import config from '../../config/index.js';
+import log from '../logging/index.js';
 
 function toExposureUsd(position) {
   const price = Number(position.currentPrice);
@@ -12,11 +13,15 @@ export async function allocateSignal({ signal, positions, balancesByBroker, dail
   const riskPct = Number(signal.riskPct);
 
   if (dailyLossUsd >= limits.maxTotalDailyLossUsd) {
-    return { approved: false, reason: 'MAX_TOTAL_DAILY_LOSS_REACHED' };
+    const decision = { approved: false, reason: 'MAX_TOTAL_DAILY_LOSS_REACHED' };
+    log.info('CAPITAL_ALLOCATION_DECISION', { market: signal.market, symbol: signal.symbol, ...decision });
+    return decision;
   }
 
   if (!Number.isFinite(riskPct) || riskPct <= 0 || riskPct > limits.perPositionMaxRisk) {
-    return { approved: false, reason: 'PER_POSITION_RISK_EXCEEDED' };
+    const decision = { approved: false, reason: 'PER_POSITION_RISK_EXCEEDED' };
+    log.info('CAPITAL_ALLOCATION_DECISION', { market: signal.market, symbol: signal.symbol, ...decision, riskPct });
+    return decision;
   }
 
   const cryptoExposure = positions
@@ -28,20 +33,32 @@ export async function allocateSignal({ signal, positions, balancesByBroker, dail
 
   const coinbaseUsd = Number(balancesByBroker.coinbase?.USD?.available || 0);
   const stockUsd = Number(balancesByBroker.stocks?.USD?.available || 0);
-  const totalPortfolioUsd = coinbaseUsd + stockUsd + cryptoExposure + equityExposure;
-  if (totalPortfolioUsd <= 0) return { approved: false, reason: 'NO_ALLOCATABLE_CAPITAL' };
+  const marketCash = signal.market === 'crypto' ? coinbaseUsd : stockUsd;
+  const marketExposureUsd = signal.market === 'crypto' ? cryptoExposure : equityExposure;
+  const marketPortfolioUsd = marketCash + marketExposureUsd;
+  if (marketPortfolioUsd <= 0) {
+    const decision = { approved: false, reason: 'NO_ALLOCATABLE_CAPITAL' };
+    log.info('CAPITAL_ALLOCATION_DECISION', { market: signal.market, symbol: signal.symbol, ...decision, marketCash, marketExposureUsd });
+    return decision;
+  }
 
-  const marketExposure = signal.market === 'crypto' ? cryptoExposure : equityExposure;
   const marketLimitPct = signal.market === 'crypto' ? limits.maxCryptoAllocation : limits.maxEquitiesAllocation;
-  const marketRemainingUsd = (totalPortfolioUsd * marketLimitPct) - marketExposure;
-  if (marketRemainingUsd <= 0) return { approved: false, reason: 'MARKET_ALLOCATION_LIMIT_REACHED' };
+  const marketRemainingUsd = (marketPortfolioUsd * marketLimitPct) - marketExposureUsd;
+  if (marketRemainingUsd <= 0) {
+    const decision = { approved: false, reason: 'MARKET_ALLOCATION_LIMIT_REACHED' };
+    log.info('CAPITAL_ALLOCATION_DECISION', { market: signal.market, symbol: signal.symbol, ...decision, marketPortfolioUsd, marketExposureUsd, marketLimitPct });
+    return decision;
+  }
 
-  const availableCash = signal.market === 'crypto' ? coinbaseUsd : stockUsd;
+  const availableCash = marketCash;
   const targetNotional = availableCash * limits.targetNotionalPct;
-  const riskBoundNotional = totalPortfolioUsd * (limits.perPositionMaxRisk / riskPct);
+  const confidence = Number(signal.confidence || 0);
+  const confidenceMultiplier = Math.min(1, Math.max(0.25, confidence));
+  const confidenceScaledTarget = targetNotional * confidenceMultiplier;
+  const riskBoundNotional = marketPortfolioUsd * (limits.perPositionMaxRisk / riskPct);
   const requestedNotional = Number.isFinite(proposedNotionalUsd) && proposedNotionalUsd > 0
     ? proposedNotionalUsd
-    : targetNotional;
+    : confidenceScaledTarget;
   const notionalUsd = Math.min(
     Math.max(0, requestedNotional),
     marketRemainingUsd,
@@ -50,7 +67,17 @@ export async function allocateSignal({ signal, positions, balancesByBroker, dail
   );
 
   if (!Number.isFinite(notionalUsd) || notionalUsd <= 0) {
-    return { approved: false, reason: 'NO_VALID_ORDER_NOTIONAL' };
+    const decision = { approved: false, reason: 'NO_VALID_ORDER_NOTIONAL' };
+    log.info('CAPITAL_ALLOCATION_DECISION', {
+      market: signal.market,
+      symbol: signal.symbol,
+      ...decision,
+      requestedNotional,
+      marketRemainingUsd,
+      availableCash,
+      riskBoundNotional,
+    });
+    return decision;
   }
 
   const minCheck = await adapter.validateMinOrder({
@@ -58,8 +85,21 @@ export async function allocateSignal({ signal, positions, balancesByBroker, dail
     notionalUsd,
   });
   if (!minCheck.valid) {
-    return { approved: false, reason: 'BROKER_MIN_ORDER_REJECTED', details: minCheck.reason };
+    const decision = { approved: false, reason: 'BROKER_MIN_ORDER_REJECTED', details: minCheck.reason };
+    log.info('CAPITAL_ALLOCATION_DECISION', { market: signal.market, symbol: signal.symbol, ...decision, notionalUsd });
+    return decision;
   }
 
-  return { approved: true, reason: 'ALLOCATOR_APPROVED', notionalUsd };
+  const decision = { approved: true, reason: 'ALLOCATOR_APPROVED', notionalUsd };
+  log.info('CAPITAL_ALLOCATION_DECISION', {
+    market: signal.market,
+    symbol: signal.symbol,
+    ...decision,
+    availableCash,
+    marketExposureUsd,
+    marketPortfolioUsd,
+    confidence,
+    requestedNotional,
+  });
+  return decision;
 }

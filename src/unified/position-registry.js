@@ -1,44 +1,64 @@
 class UnifiedPositionRegistry {
   constructor() {
-    this.positions = new Map();
+    this.cryptoPositions = new Map();
+    this.stockPositions = new Map();
   }
 
   _key(broker, symbol) {
     return `${broker}:${symbol}`;
   }
 
-  syncPositions(items, broker) {
+  _toRecord(item, defaultBroker, executionType) {
+    return {
+      broker: item.broker || defaultBroker,
+      symbol: item.symbol,
+      market: item.market,
+      size: item.size,
+      entry: item.entry,
+      currentPrice: item.currentPrice,
+      unrealizedPnL: item.unrealizedPnL,
+      tp: item.tp ?? null,
+      sl: item.sl ?? null,
+      openedAt: item.openedAt ?? null,
+      positionAgeMs: item.positionAgeMs ?? null,
+      lastMarketUpdateTs: item.lastMarketUpdateTs ?? null,
+      executionType: item.executionType || executionType,
+    };
+  }
+
+  _syncMap(targetMap, items, defaultBroker, executionType) {
     const nextKeys = new Set();
     for (const item of items) {
-      const key = this._key(item.broker || broker, item.symbol);
+      const key = this._key(item.broker || defaultBroker, item.symbol);
       nextKeys.add(key);
-      this.positions.set(key, {
-        broker: item.broker || broker,
-        symbol: item.symbol,
-        market: item.market,
-        size: item.size,
-        entry: item.entry,
-        currentPrice: item.currentPrice,
-        unrealizedPnL: item.unrealizedPnL,
-        tp: item.tp ?? null,
-        sl: item.sl ?? null,
-        openedAt: item.openedAt ?? null,
-      });
+      targetMap.set(key, this._toRecord(item, defaultBroker, executionType));
     }
 
-    for (const [key, value] of this.positions.entries()) {
-      if (value.broker === broker && !nextKeys.has(key)) {
-        this.positions.delete(key);
+    for (const key of Array.from(targetMap.keys())) {
+      if (!nextKeys.has(key)) {
+        targetMap.delete(key);
       }
     }
   }
 
-  list({ broker = null, market = null } = {}) {
-    return Array.from(this.positions.values()).filter((position) => {
-      if (broker && position.broker !== broker) return false;
-      if (market && position.market !== market) return false;
-      return true;
-    });
+  syncCryptoPositions(items, broker = 'coinbase') {
+    this._syncMap(this.cryptoPositions, items, broker, 'REAL');
+  }
+
+  syncStockPositions(items, broker = 'paper-stock') {
+    this._syncMap(this.stockPositions, items, broker, 'PAPER');
+  }
+
+  listCrypto() {
+    return Array.from(this.cryptoPositions.values());
+  }
+
+  listStocks() {
+    return Array.from(this.stockPositions.values());
+  }
+
+  listAll() {
+    return [...this.listCrypto(), ...this.listStocks()];
   }
 }
 
