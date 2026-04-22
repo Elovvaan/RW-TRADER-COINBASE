@@ -99,8 +99,10 @@ const routes = {
   'GET /health': async (_req, res) => {
     const hasCredentials = config.hasCoinbaseCredentials;
     const agentRunning = Boolean(_agent);
+    const cryptoReady = !config.enableCrypto || hasCredentials;
+    const equitiesReady = !config.enableEquities || agentRunning;
     json(res, 200, {
-      status: agentRunning ? 'ok' : 'degraded',
+      status: agentRunning && cryptoReady && equitiesReady ? 'ok' : 'degraded',
       ts: new Date().toISOString(),
       dryRun: config.dryRun,
       authority: config.authority,

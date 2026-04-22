@@ -77,8 +77,9 @@ export function getDashboardHTML() {
 </main>
 <script>
   function fmt(v, dec = 2) {
-    if (v === null || v === undefined || Number.isNaN(Number(v))) return '—';
-    return Number(v).toLocaleString('en-US', { minimumFractionDigits: dec, maximumFractionDigits: dec });
+    const n = Number(v);
+    if (v === null || v === undefined || Number.isNaN(n)) return '—';
+    return n.toLocaleString('en-US', { minimumFractionDigits: dec, maximumFractionDigits: dec });
   }
   function age(ts) {
     if (!ts) return '—';

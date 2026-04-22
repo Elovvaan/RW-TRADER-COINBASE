@@ -32,7 +32,9 @@ async function main() {
     });
   }
 
-  if (!cryptoEnabled || config.hasCoinbaseCredentials || equitiesEnabled) {
+  const canRunCrypto = cryptoEnabled && config.hasCoinbaseCredentials;
+  const canRunEquities = equitiesEnabled;
+  if (canRunCrypto || canRunEquities) {
     if (cryptoEnabled && config.hasCoinbaseCredentials) {
       const ok = await runStartupValidation();
       if (!ok) {

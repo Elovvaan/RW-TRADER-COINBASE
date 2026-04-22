@@ -9,12 +9,13 @@ function toExposureUsd(position) {
 
 export async function allocateSignal({ signal, positions, balancesByBroker, dailyLossUsd, adapter, proposedNotionalUsd }) {
   const limits = config.allocator;
+  const riskPct = Number(signal.riskPct);
 
   if (dailyLossUsd >= limits.maxTotalDailyLossUsd) {
     return { approved: false, reason: 'MAX_TOTAL_DAILY_LOSS_REACHED' };
   }
 
-  if (!Number.isFinite(signal.riskPct) || signal.riskPct <= 0 || signal.riskPct > limits.perPositionMaxRisk) {
+  if (!Number.isFinite(riskPct) || riskPct <= 0 || riskPct > limits.perPositionMaxRisk) {
     return { approved: false, reason: 'PER_POSITION_RISK_EXCEEDED' };
   }
 
@@ -37,7 +38,7 @@ export async function allocateSignal({ signal, positions, balancesByBroker, dail
 
   const availableCash = signal.market === 'crypto' ? coinbaseUsd : stockUsd;
   const targetNotional = availableCash * limits.targetNotionalPct;
-  const riskBoundNotional = totalPortfolioUsd * (limits.perPositionMaxRisk / signal.riskPct);
+  const riskBoundNotional = totalPortfolioUsd * (limits.perPositionMaxRisk / riskPct);
   const requestedNotional = Number.isFinite(proposedNotionalUsd) && proposedNotionalUsd > 0
     ? proposedNotionalUsd
     : targetNotional;

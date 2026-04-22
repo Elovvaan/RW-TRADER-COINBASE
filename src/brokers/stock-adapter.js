@@ -1,5 +1,10 @@
 import config from '../../config/index.js';
 
+const WOBBLE_PCT = 0.006;
+const DRIFT_PCT = 0.003;
+const WOBBLE_PERIOD_MIN = 3;
+const DRIFT_PERIOD_MIN = 11;
+
 function toCents(v) {
   return Math.round(Number(v) * 100) / 100;
 }
@@ -37,8 +42,10 @@ export class StockAdapter {
   getQuote(symbol) {
     const anchor = config.stockBroker.priceAnchors[symbol] || 100;
     const t = Date.now() / 60000;
-    const wobble = Math.sin((t + seededOffset(symbol)) / 3) * 0.006;
-    const drift = Math.cos((t + seededOffset(symbol)) / 11) * 0.003;
+    // Paper-trading quote model: ~0.9% bounded oscillation around anchor, with
+    // short wobble + slow drift to keep prices moving but deterministic/repeatable.
+    const wobble = Math.sin((t + seededOffset(symbol)) / WOBBLE_PERIOD_MIN) * WOBBLE_PCT;
+    const drift = Math.cos((t + seededOffset(symbol)) / DRIFT_PERIOD_MIN) * DRIFT_PCT;
     const price = anchor * (1 + wobble + drift);
     const quote = {
       symbol,

@@ -15,6 +15,7 @@ export function normalizeCryptoSignal(signal) {
     reason: signal.reason || null,
     ts: signal.ts || Date.now(),
     indicators: signal.indicators || {},
+    // Compatibility aliases for existing Coinbase-centric API consumers.
     productId: signal.productId,
     action: signal.action,
     entryPrice: signal.entryPrice,
