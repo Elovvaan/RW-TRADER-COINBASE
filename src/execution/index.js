@@ -186,6 +186,14 @@ export async function checkAndExecuteExits(priceMap) {
     if (!exit?.shouldExit) continue;
 
     log.info('EXIT_TRIGGERED', { productId: pos.productId, reason: exit.reason, price: currentPrice });
+    if (pos.productId === 'BTC-USD') {
+      log.info('BTC_EXIT_DECISION', {
+        productId: pos.productId,
+        reason: exit.reason,
+        price: currentPrice,
+        actionType: 'EXIT_BTC_TO_USD',
+      });
+    }
 
     // Submit market sell
     let sellResult;
