@@ -118,6 +118,8 @@ export const config = {
   dayTrade: {
     scanIntervalMs: parseInt_('DAY_TRADE_SCAN_INTERVAL_MS', 15000),
     defaultTimeframe: optionalEnv('DAY_TRADE_TIMEFRAME', '1m'),
+    minConfidence: parseFloat_('DAY_TRADE_MIN_CONFIDENCE', 0.4),
+    fallbackMinConfidence: parseFloat_('DAY_TRADE_FALLBACK_MIN_CONFIDENCE', 0.35),
     takeProfitPct: parseFloat_('DAY_TRADE_TAKE_PROFIT_PCT', 0.012),
     stopLossPct: parseFloat_('DAY_TRADE_STOP_LOSS_PCT', 0.006),
     trendProximityPct: parseFloat_('DAY_TRADE_TREND_PROXIMITY_PCT', 0.008),
@@ -125,8 +127,23 @@ export const config = {
     rsiMax: parseFloat_('DAY_TRADE_RSI_MAX', 68),
     maxTradesPerSession: parseInt_('DAY_TRADE_MAX_TRADES_PER_SESSION', 12),
     maxOpenPositions: parseInt_('DAY_TRADE_MAX_OPEN_POSITIONS', 2),
-    cooldownAfterStopMs: parseInt_('DAY_TRADE_COOLDOWN_AFTER_STOP_MS', 1800000),
+    cooldownAfterStopMs: parseInt_('DAY_TRADE_COOLDOWN_AFTER_STOP_MS', 600000), // Reduced from 30m to 10m to avoid inactivity deadlock after stop-outs.
     sessionDurationMs: parseInt_('DAY_TRADE_SESSION_DURATION_MS', 28800000),
+    inactivityForceTradeMs: parseInt_('DAY_TRADE_INACTIVITY_FORCE_TRADE_MS', 3600000),
+    idleCapitalThresholdPct: parseFloat_('DAY_TRADE_IDLE_CAPITAL_THRESHOLD_PCT', 0.7),
+    idleCapitalWindowMs: parseInt_('DAY_TRADE_IDLE_CAPITAL_WINDOW_MS', 3600000),
+    minTradesTarget: parseInt_('DAY_TRADE_MIN_TRADES_TARGET', 1),
+    maxThresholdRelaxation: parseFloat_('DAY_TRADE_MAX_THRESHOLD_RELAXATION', 0.08),
+  },
+
+  smallAccount: {
+    equityThresholdUsd: parseFloat_('SMALL_ACCOUNT_EQUITY_THRESHOLD_USD', 500),
+    lowEquitySinglePositionUsd: parseFloat_('SMALL_ACCOUNT_LOW_EQUITY_SINGLE_POSITION_USD', 250),
+    minPositionPct: parseFloat_('SMALL_ACCOUNT_MIN_POSITION_PCT', 0.2),
+    maxPositionPct: parseFloat_('SMALL_ACCOUNT_MAX_POSITION_PCT', 0.5),
+    maxOpenPositions: parseInt_('SMALL_ACCOUNT_MAX_OPEN_POSITIONS', 2),
+    duplicateWindowMs: parseInt_('SMALL_ACCOUNT_DUPLICATE_WINDOW_MS', 300000),
+    maxSingleTradeCashPct: parseFloat_('MAX_SINGLE_TRADE_CASH_PCT', 0.95),
   },
 
   // Stock broker adapter

@@ -42,7 +42,13 @@ export class CoinbaseAdapter {
     return { valid: check.valid, reason: check.reason || null };
   }
 
-  async executeSignal({ signal, snapshot, priceMap }) {
+  async getMinOrderNotional(symbol) {
+    const product = await getProduct(symbol);
+    const minQuote = Number(product?.quote_min_size || 0);
+    return Number.isFinite(minQuote) && minQuote > 0 ? minQuote : 0;
+  }
+
+  async executeSignal({ signal, snapshot, priceMap, allocation = null, executionContext = {} }) {
     const legacySignal = {
       productId: signal.symbol,
       action: signal.side,
@@ -55,7 +61,11 @@ export class CoinbaseAdapter {
       indicators: signal.indicators || {},
     };
 
-    return evaluateAndExecute(legacySignal, snapshot, priceMap);
+    const overrideQuoteSize = Number(allocation?.notionalUsd);
+    return evaluateAndExecute(legacySignal, snapshot, priceMap, {
+      quoteSizeOverride: Number.isFinite(overrideQuoteSize) ? overrideQuoteSize : null,
+      executionContext,
+    });
   }
 }
 

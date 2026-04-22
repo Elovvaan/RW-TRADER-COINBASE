@@ -11,8 +11,13 @@ import portfolio from './portfolio/index.js';
 import stockAdapter from './brokers/stock-adapter.js';
 import unifiedExecutionRouter from './unified/execution-router.js';
 import { normalizeCryptoSignal, normalizeEquitySignal } from './unified/signals.js';
+import { portfolioValueUSD } from './accounts/index.js';
 
 const EXIT_CHECK_INTERVAL_MS = 60 * 1000; // Check exits every 60s
+// Additional confidence-threshold relaxation applied after prolonged inactivity.
+const INACTIVITY_THRESHOLD_BOOST = 0.02;
+// Per-trade shortfall multiplier used to relax day-trade confidence threshold.
+const SHORTFALL_RELAXATION_FACTOR = 0.03;
 
 export class TradingAgent {
   constructor() {
@@ -31,6 +36,8 @@ export class TradingAgent {
       tradesExecuted: 0,
       stopOutCount: 0,
     };
+    this.lastTradeExecutedAt = Date.now();
+    this.idleCapitalSince = null;
   }
 
   async start() {
@@ -171,6 +178,7 @@ export class TradingAgent {
 
   _executionStatus(reason) {
     if (!reason) return 'SIGNAL_SKIPPED';
+    if (reason === 'FORCED_TRADE_EXECUTED') return 'EXECUTED_FALLBACK_TRADE';
     if (reason === 'DUPLICATE_ENTRY_BLOCKED') return 'DUPLICATE_ENTRY_BLOCKED';
     if (reason === 'MAX_POSITIONS_REACHED') return 'MAX_POSITIONS_BLOCKED';
     if ([
@@ -216,6 +224,157 @@ export class TradingAgent {
     };
   }
 
+  async _getCryptoAccountState(priceMap) {
+    if (!config.cryptoAutoEnabled) return null;
+    const balances = await unifiedExecutionRouter.adapters.crypto.getBalances();
+    const availableUsd = Number(balances?.USD?.available || 0);
+    const totalEquityUsd = portfolioValueUSD(balances, priceMap);
+    const availableCryptoUsd = Math.max(0, totalEquityUsd - availableUsd);
+    const smallAccountMode = totalEquityUsd > 0 && totalEquityUsd <= config.smallAccount.equityThresholdUsd;
+    const idleCapitalPct = totalEquityUsd > 0 ? (availableUsd / totalEquityUsd) : 1;
+    const now = Date.now();
+    if (idleCapitalPct > config.dayTrade.idleCapitalThresholdPct) {
+      this.idleCapitalSince = this.idleCapitalSince || now;
+    } else {
+      this.idleCapitalSince = null;
+    }
+    const maxConcurrentPositions = this._calculateMaxPositionsForEquity(totalEquityUsd, smallAccountMode);
+    return {
+      balances,
+      availableUsd,
+      availableCryptoUsd,
+      totalEquityUsd,
+      smallAccountMode,
+      idleCapitalPct,
+      idleCapitalForcingActive: Boolean(
+        this.idleCapitalSince
+        && (now - this.idleCapitalSince >= config.dayTrade.idleCapitalWindowMs)
+      ),
+      maxConcurrentPositions,
+      ts: now,
+    };
+  }
+
+  _calculateMaxPositionsForEquity(totalEquityUsd, smallAccountMode) {
+    if (!smallAccountMode) return config.dayTrade.maxOpenPositions;
+    if (totalEquityUsd <= config.smallAccount.lowEquitySinglePositionUsd) return 1;
+    return Math.max(1, Math.min(2, config.smallAccount.maxOpenPositions));
+  }
+
+  _effectiveDayTradeThreshold() {
+    if (config.strategyMode !== 'DAY_TRADE') return config.signalConfidenceThreshold;
+    const base = Number(config.dayTrade.minConfidence || 0.4);
+    const fallbackFloor = Number(config.dayTrade.fallbackMinConfidence || 0.35);
+    const elapsedMs = Math.max(0, Date.now() - this.dayTradeSession.startedAt);
+    const durationMs = Math.max(1, Number(config.dayTrade.sessionDurationMs || 1));
+    const elapsedRatio = Math.min(1, elapsedMs / durationMs);
+    const targetByNow = Number(config.dayTrade.minTradesTarget || 1) * elapsedRatio;
+    const shortfall = Math.max(0, targetByNow - this.dayTradeSession.tradesExecuted);
+    const inactivityBoost = this.lastTradeExecutedAt > 0
+      && (Date.now() - this.lastTradeExecutedAt) >= config.dayTrade.inactivityForceTradeMs
+      ? INACTIVITY_THRESHOLD_BOOST
+      : 0;
+    const relaxation = Math.min(
+      Number(config.dayTrade.maxThresholdRelaxation || 0.08),
+      (shortfall * SHORTFALL_RELAXATION_FACTOR) + inactivityBoost,
+    );
+    const threshold = Math.max(fallbackFloor, base - relaxation);
+    if (relaxation > 0) {
+      log.info('DAY_TRADE_THRESHOLD_RELAXED', {
+        baseThreshold: base,
+        threshold,
+        relaxation,
+        shortfall,
+        tradesExecuted: this.dayTradeSession.tradesExecuted,
+        targetByNow,
+      });
+    }
+    return threshold;
+  }
+
+  _forceTradeReason(accountState) {
+    const noTradeTooLong = (Date.now() - this.lastTradeExecutedAt) >= config.dayTrade.inactivityForceTradeMs;
+    if (accountState?.idleCapitalForcingActive) return 'IDLE_CAPITAL_FORCE';
+    if (noTradeTooLong) return 'NO_TRADE_TIMEOUT';
+    return null;
+  }
+
+  _requiredConfidenceForSignal(signal, dayTradeConfidenceThreshold) {
+    if (config.strategyMode !== 'DAY_TRADE') return config.signalConfidenceThreshold;
+    if (signal.reason === 'DAY_TRADE_MOMENTUM_FALLBACK') {
+      return Math.min(dayTradeConfidenceThreshold, config.dayTrade.fallbackMinConfidence);
+    }
+    return dayTradeConfidenceThreshold;
+  }
+
+  async _executeForcedTradeIfNeeded({ summary, priceMap, candidates, accountState }) {
+    if (config.strategyMode !== 'DAY_TRADE' || summary.executedTrades > 0) return false;
+    const reason = this._forceTradeReason(accountState);
+    if (!reason) return false;
+    const bestCandidate = [...candidates]
+      .sort((a, b) => Number(b.signal?.confidence || 0) - Number(a.signal?.confidence || 0))[0];
+    if (!bestCandidate) return false;
+
+    const executionContext = {
+      smallAccountMode: Boolean(accountState?.smallAccountMode),
+      forceTrade: true,
+      forceMinNotional: true,
+      maxOpenPositions: accountState?.maxConcurrentPositions,
+      availableUsd: accountState?.availableUsd,
+      availableCryptoUsd: accountState?.availableCryptoUsd,
+      totalEquityUsd: accountState?.totalEquityUsd,
+      idleCapitalPct: accountState?.idleCapitalPct,
+      forceReason: reason,
+    };
+    const execution = await unifiedExecutionRouter.route({
+      signal: bestCandidate.unifiedSignal,
+      snapshot: bestCandidate.snapshot,
+      priceMap,
+      executionContext,
+    });
+    if (!execution?.executed) {
+      const status = this._executionStatus(execution?.reason);
+      this._recordDecision({
+        productId: bestCandidate.productId,
+        status,
+        skipReason: execution?.reason || 'FORCED_TRADE_FAILED',
+        signal: bestCandidate.signal,
+        details: { forceReason: reason, forced: true },
+      });
+      return false;
+    }
+
+    summary.executedTrades += 1;
+    this.lastTradeExecutedAt = Date.now();
+    this.dayTradeSession.tradesExecuted += 1;
+    this._recordDecision({
+      productId: bestCandidate.productId,
+      status: 'EXECUTED_FALLBACK_TRADE',
+      skipReason: 'FORCED_TRADE_EXECUTED',
+      signal: bestCandidate.signal,
+      details: { forceReason: reason, forced: true },
+    });
+    log.info('FORCED_TRADE_EXECUTED', {
+      productId: bestCandidate.productId,
+      confidence: bestCandidate.signal?.confidence,
+      forceReason: reason,
+    });
+    log.info('DAY_TRADE_ORDER_SUBMITTED', {
+      productId: bestCandidate.productId,
+      dryRun: Boolean(execution?.result?.dryRun),
+      strategyMode: config.strategyMode,
+      forced: true,
+    });
+    if (execution?.positionOpened) {
+      log.info('DAY_TRADE_ORDER_FILLED', {
+        productId: bestCandidate.productId,
+        orderId: execution?.result?.orderId || null,
+        forced: true,
+      });
+    }
+    return true;
+  }
+
   async _runSignalCycle(trigger = 'manual') {
     if (!this.running) return;
 
@@ -258,6 +417,12 @@ export class TradingAgent {
 
     try {
       const priceMap = this._buildPriceMap();
+      const dayTradeConfidenceThreshold = this._effectiveDayTradeThreshold();
+      const accountState = await this._getCryptoAccountState(priceMap).catch((error) => {
+        log.warn('ACCOUNT_STATE_FETCH_FAILED', { error: error.message });
+        return null;
+      });
+      const forceCandidates = [];
 
       if (!config.cryptoAutoEnabled) {
         log.info('CRYPTO_ENGINE_DISABLED', { trigger, reason: 'CRYPTO_AUTO_DISABLED' });
@@ -327,7 +492,10 @@ export class TradingAgent {
               continue;
             }
 
-            if (signal.confidence < config.signalConfidenceThreshold) {
+            forceCandidates.push({ productId, signal, unifiedSignal, snapshot: snap });
+
+            const requiredConfidence = this._requiredConfidenceForSignal(signal, dayTradeConfidenceThreshold);
+            if (signal.confidence < requiredConfidence) {
               this._incrementSkipped(summary);
               this._recordDecision({
                 productId,
@@ -335,7 +503,7 @@ export class TradingAgent {
                 skipReason: 'CONFIDENCE_TOO_LOW',
                 signal,
                 details: {
-                  threshold: config.signalConfidenceThreshold,
+                  threshold: requiredConfidence,
                 },
               });
               continue;
@@ -378,9 +546,19 @@ export class TradingAgent {
               signal: unifiedSignal,
               snapshot: snap,
               priceMap,
+              executionContext: {
+                smallAccountMode: Boolean(accountState?.smallAccountMode),
+                forceTrade: false,
+                maxOpenPositions: accountState?.maxConcurrentPositions,
+                availableUsd: accountState?.availableUsd,
+                availableCryptoUsd: accountState?.availableCryptoUsd,
+                totalEquityUsd: accountState?.totalEquityUsd,
+                idleCapitalPct: accountState?.idleCapitalPct,
+              },
             });
             if (execution?.executed) {
               summary.executedTrades += 1;
+              this.lastTradeExecutedAt = Date.now();
               if (config.strategyMode === 'DAY_TRADE') {
                 this.dayTradeSession.tradesExecuted += 1;
                 log.info('DAY_TRADE_ORDER_SUBMITTED', {
@@ -417,6 +595,12 @@ export class TradingAgent {
             });
           }
         }
+        await this._executeForcedTradeIfNeeded({
+          summary,
+          priceMap,
+          candidates: forceCandidates,
+          accountState,
+        });
       }
 
       if (!config.stockPaperEnabled) {
@@ -444,7 +628,11 @@ export class TradingAgent {
       if (summary.executedTrades === 0) {
         log.info('NO_TRADE_CONDITIONS_MET', {
           ...summary,
-          confidenceThreshold: config.signalConfidenceThreshold,
+          confidenceThreshold: config.strategyMode === 'DAY_TRADE'
+            ? dayTradeConfidenceThreshold
+            : config.signalConfidenceThreshold,
+          idleCapitalSince: this.idleCapitalSince ? new Date(this.idleCapitalSince).toISOString() : null,
+          lastTradeExecutedAt: this.lastTradeExecutedAt ? new Date(this.lastTradeExecutedAt).toISOString() : null,
         });
       }
 

@@ -1,6 +1,12 @@
 import config from '../../config/index.js';
 import log from '../logging/index.js';
 
+const MIN_SINGLE_TRADE_PCT = 0.01;
+const MAX_SINGLE_TRADE_PCT = 0.99;
+const DEFAULT_MAX_SINGLE_TRADE_PCT = 0.95;
+const MIN_SMALL_ACCOUNT_POSITION_PCT = 0.01;
+const MAX_SMALL_ACCOUNT_POSITION_PCT = 0.95;
+
 function toExposureUsd(position) {
   const price = Number(position.currentPrice);
   const size = Number(position.size);
@@ -8,7 +14,7 @@ function toExposureUsd(position) {
   return Math.abs(price * size);
 }
 
-export async function allocateSignal({ signal, positions, balancesByBroker, dailyLossUsd, adapter, proposedNotionalUsd }) {
+export async function allocateSignal({ signal, positions, balancesByBroker, dailyLossUsd, adapter, proposedNotionalUsd, executionContext = {} }) {
   const limits = config.allocator;
   const riskPct = Number(signal.riskPct);
 
@@ -60,13 +66,60 @@ export async function allocateSignal({ signal, positions, balancesByBroker, dail
   const confidenceMultiplier = Math.min(1, Math.max(0.25, confidence));
   const confidenceScaledTarget = targetNotional * confidenceMultiplier;
   const riskBoundNotional = marketPortfolioUsd * (limits.perPositionMaxRisk / riskPct);
-  const requestedNotional = Number.isFinite(proposedNotionalUsd) && proposedNotionalUsd > 0
+  const hasSmallAccountFlag = typeof executionContext.smallAccountMode === 'boolean';
+  const smallAccountMode = signal.market === 'crypto'
+    && (hasSmallAccountFlag ? executionContext.smallAccountMode : marketPortfolioUsd <= config.smallAccount.equityThresholdUsd);
+  const forceTrade = Boolean(executionContext.forceTrade);
+  const forceMinNotional = Boolean(executionContext.forceMinNotional);
+  const maxSingleTradeCashPct = Math.max(
+    MIN_SINGLE_TRADE_PCT,
+    Math.min(MAX_SINGLE_TRADE_PCT, Number(config.smallAccount.maxSingleTradeCashPct || DEFAULT_MAX_SINGLE_TRADE_PCT)),
+  );
+
+  let requestedNotional = Number.isFinite(proposedNotionalUsd) && proposedNotionalUsd > 0
     ? proposedNotionalUsd
     : confidenceScaledTarget;
+  if (signal.market === 'crypto' && smallAccountMode) {
+    const minPct = Math.max(
+      MIN_SMALL_ACCOUNT_POSITION_PCT,
+      Math.min(MAX_SMALL_ACCOUNT_POSITION_PCT, Number(config.smallAccount.minPositionPct || 0.2)),
+    );
+    const maxPct = Math.max(minPct, Math.min(MAX_SINGLE_TRADE_PCT, Number(config.smallAccount.maxPositionPct || 0.5)));
+    const confidenceScaledPct = minPct + ((maxPct - minPct) * Math.min(1, Math.max(0, confidence)));
+    requestedNotional = Math.max(requestedNotional, availableCash * confidenceScaledPct);
+    if (forceMinNotional) {
+      requestedNotional = Math.max(requestedNotional, availableCash * minPct);
+    }
+  }
+
+  if (signal.market === 'crypto' && forceTrade && !forceMinNotional) {
+    requestedNotional = Math.max(requestedNotional, availableCash * limits.targetNotionalPct);
+  }
+
+  if (signal.market === 'crypto' && availableCash <= 0) {
+    const decision = { approved: false, reason: 'NO_ALLOCATABLE_CAPITAL' };
+    log.info('CAPITAL_ALLOCATION_DECISION', {
+      market: signal.market,
+      symbol: signal.symbol,
+      ...decision,
+      availableCash,
+      note: 'NO_USD_FOR_ENTRY_PREFERS_EXISTING_CRYPTO_MANAGEMENT',
+    });
+    return decision;
+  }
+
+  if (signal.market === 'crypto' && typeof adapter.getMinOrderNotional === 'function') {
+    const minOrderNotional = await adapter.getMinOrderNotional(signal.symbol).catch(() => 0);
+    if (Number.isFinite(minOrderNotional) && minOrderNotional > 0) {
+      requestedNotional = Math.max(requestedNotional, minOrderNotional);
+    }
+  }
+
   const notionalUsd = Math.min(
     Math.max(0, requestedNotional),
     marketRemainingUsd,
     availableCash,
+    availableCash * maxSingleTradeCashPct,
     riskBoundNotional,
   );
 
@@ -104,6 +157,9 @@ export async function allocateSignal({ signal, positions, balancesByBroker, dail
     marketPortfolioUsd,
     confidence,
     requestedNotional,
+    smallAccountMode,
+    forceTrade,
+    forceMinNotional,
   });
   return decision;
 }
