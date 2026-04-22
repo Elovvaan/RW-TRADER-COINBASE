@@ -551,6 +551,7 @@ export function getDashboardHTML() {
   const EMPTY_VALUE = '—';
   const DEFAULT_REFRESH_INTERVAL_MS = 5000;
   const MAX_LOG_ENTRIES = 70;
+  const NEWLINE_CHAR = String.fromCharCode(10);
   const MAX_CANDLE_HISTORY = 1200;
   const MAX_DISPLAY_CANDLES = 120;
   const CANDLE_BUCKET_MS = 5000;
@@ -616,6 +617,12 @@ export function getDashboardHTML() {
     const c = s === 'BUY' ? 'badge-buy' : (s === 'SELL' ? 'badge-sell' : 'badge-wait');
     return '<span class="badge ' + c + '">' + s + '</span>';
   }
+  function isValidSignal(signal) {
+    return signal && typeof signal === 'object' && !Array.isArray(signal);
+  }
+  function formatSignalLevel(signal, field) {
+    return signal && Number.isFinite(Number(signal[field])) ? usd(signal[field]) : EMPTY_VALUE;
+  }
   function typeBadge(symbol) {
     return CRYPTO_SET.has(symbol)
       ? '<span class="badge badge-real">REAL</span>'
@@ -634,7 +641,7 @@ export function getDashboardHTML() {
     state.strategyLog.unshift(line);
     state.strategyLog = state.strategyLog.slice(0, MAX_LOG_ENTRIES);
     const logEl = document.getElementById('strategy-log');
-    if (logEl) logEl.textContent = state.strategyLog.join('\n');
+    if (logEl) logEl.textContent = state.strategyLog.join(NEWLINE_CHAR);
   }
 
   function symbolSignal(symbol) {
@@ -654,6 +661,7 @@ export function getDashboardHTML() {
   }
 
   function normalizePosition(raw) {
+    raw = raw || {};
     const symbol = raw.symbol || raw.productId || raw.asset || EMPTY_VALUE;
     const sizeNum = Number(raw.size || raw.qty || raw.quantity || 0);
     const entry = Number(raw.entry || raw.entryPrice || raw.avgEntryPrice);
@@ -761,7 +769,7 @@ export function getDashboardHTML() {
     const existing = new Map(state.signalHistory.map(function(s) {
       return [signalKey(s), s];
     }));
-    (signals || []).forEach(function(s) {
+    (signals || []).filter(isValidSignal).forEach(function(s) {
       const clean = {
         market: s.market || (CRYPTO_SET.has(s.symbol) ? 'crypto' : 'equities'),
         symbol: s.symbol,
@@ -957,9 +965,9 @@ export function getDashboardHTML() {
     document.getElementById('chart-detail-signal').innerHTML = sideBadge(side);
     document.getElementById('chart-detail-confidence').textContent = Math.round(conf * 100) + '%';
     document.getElementById('chart-detail-risk').textContent =
-      (Number.isFinite(Number(sig && sig.entry)) ? usd(sig.entry) : EMPTY_VALUE) + ' / ' +
-      (Number.isFinite(Number(sig && sig.tp)) ? usd(sig.tp) : EMPTY_VALUE) + ' / ' +
-      (Number.isFinite(Number(sig && sig.sl)) ? usd(sig.sl) : EMPTY_VALUE);
+      formatSignalLevel(sig, 'entry') + ' / ' +
+      formatSignalLevel(sig, 'tp') + ' / ' +
+      formatSignalLevel(sig, 'sl');
     document.getElementById('chart-detail-position').textContent = pos
       ? ('OPEN ' + pos.side + ' · ' + usd(pos.unrealizedPnL || 0))
       : 'Flat';
