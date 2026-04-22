@@ -295,7 +295,7 @@ export class TradingAgent {
   _forceTradeReason(accountState) {
     const noTradeTooLong = (Date.now() - this.lastTradeExecutedAt) >= config.dayTrade.inactivityForceTradeMs;
     if (accountState?.idleCapitalForcingActive) return 'IDLE_CAPITAL_FORCE';
-    if (noTradeTooLong) return 'NO_TRADE_60M';
+    if (noTradeTooLong) return 'NO_TRADE_TIMEOUT';
     return null;
   }
 
