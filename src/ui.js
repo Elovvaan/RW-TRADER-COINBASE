@@ -654,6 +654,7 @@ export function getDashboardHTML() {
   }
 
   function normalizePosition(raw) {
+    raw = raw || {};
     const symbol = raw.symbol || raw.productId || raw.asset || EMPTY_VALUE;
     const sizeNum = Number(raw.size || raw.qty || raw.quantity || 0);
     const entry = Number(raw.entry || raw.entryPrice || raw.avgEntryPrice);
@@ -761,7 +762,7 @@ export function getDashboardHTML() {
     const existing = new Map(state.signalHistory.map(function(s) {
       return [signalKey(s), s];
     }));
-    (signals || []).forEach(function(s) {
+    (signals || []).filter(Boolean).forEach(function(s) {
       const clean = {
         market: s.market || (CRYPTO_SET.has(s.symbol) ? 'crypto' : 'equities'),
         symbol: s.symbol,
@@ -957,9 +958,9 @@ export function getDashboardHTML() {
     document.getElementById('chart-detail-signal').innerHTML = sideBadge(side);
     document.getElementById('chart-detail-confidence').textContent = Math.round(conf * 100) + '%';
     document.getElementById('chart-detail-risk').textContent =
-      (Number.isFinite(Number(sig && sig.entry)) ? usd(sig.entry) : EMPTY_VALUE) + ' / ' +
-      (Number.isFinite(Number(sig && sig.tp)) ? usd(sig.tp) : EMPTY_VALUE) + ' / ' +
-      (Number.isFinite(Number(sig && sig.sl)) ? usd(sig.sl) : EMPTY_VALUE);
+      (sig && Number.isFinite(Number(sig.entry)) ? usd(sig.entry) : EMPTY_VALUE) + ' / ' +
+      (sig && Number.isFinite(Number(sig.tp)) ? usd(sig.tp) : EMPTY_VALUE) + ' / ' +
+      (sig && Number.isFinite(Number(sig.sl)) ? usd(sig.sl) : EMPTY_VALUE);
     document.getElementById('chart-detail-position').textContent = pos
       ? ('OPEN ' + pos.side + ' · ' + usd(pos.unrealizedPnL || 0))
       : 'Flat';
