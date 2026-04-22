@@ -14,6 +14,12 @@ function toExposureUsd(position) {
   return Math.abs(price * size);
 }
 
+function clamp01(value, fallback = 0) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(0, Math.min(1, n));
+}
+
 export async function allocateSignal({ signal, positions, balancesByBroker, dailyLossUsd, adapter, proposedNotionalUsd, executionContext = {} }) {
   const limits = config.allocator;
   const riskPct = Number(signal.riskPct);
@@ -45,10 +51,15 @@ export async function allocateSignal({ signal, positions, balancesByBroker, dail
   const btcUsd = Number.isFinite(btcPrice) && btcPrice > 0 ? btcHeld * btcPrice : 0;
   const ethUsd = Number.isFinite(ethPrice) && ethPrice > 0 ? ethHeld * ethPrice : 0;
   const rotatableCryptoUsd = btcUsd + ethUsd;
+  const symbolBase = String(signal.symbol || '').split('-')[0];
+  const symbolHeldUnits = Number(balancesByBroker.coinbase?.[symbolBase]?.total || 0);
+  const symbolUsdPrice = Number(executionContext.priceMap?.[`${symbolBase}-USD`] || executionContext.priceMap?.[signal.symbol] || 0);
+  const symbolHeldUsd = Number.isFinite(symbolUsdPrice) && symbolUsdPrice > 0 ? symbolHeldUnits * symbolUsdPrice : 0;
   const stockUsd = Number(balancesByBroker.stocks?.USD?.available || 0);
   const marketCash = signal.market === 'crypto' ? coinbaseUsd : stockUsd;
   const marketExposureUsd = signal.market === 'crypto' ? cryptoExposure : equityExposure;
   const marketPortfolioUsd = marketCash + marketExposureUsd;
+  const openStrategyPositions = positions.filter((position) => position.market === signal.market);
   if (signal.market === 'crypto') {
     log.info('CAPITAL_STATE_READ', {
       market: signal.market,
@@ -58,7 +69,15 @@ export async function allocateSignal({ signal, positions, balancesByBroker, dail
       ethHeld,
       btcUsd,
       ethUsd,
+      symbolBase,
+      symbolHeldUnits,
+      symbolHeldUsd,
       rotatableCryptoUsd,
+      openStrategyPositions: openStrategyPositions.map((position) => ({
+        symbol: position.symbol,
+        size: position.size,
+        exposureUsd: toExposureUsd(position),
+      })),
       marketExposureUsd,
       marketPortfolioUsd,
     });
@@ -78,13 +97,20 @@ export async function allocateSignal({ signal, positions, balancesByBroker, dail
   }
 
   const availableCash = marketCash;
-  const targetNotional = availableCash * limits.targetNotionalPct;
+  const maxOpenPositions = Number(executionContext.maxOpenPositions || 3);
+  const regime = String(executionContext.regime || executionContext.strategyMode || config.strategyMode || 'SWING').toUpperCase();
+  const baseTargetPct = clamp01(limits.targetNotionalPct, 0.2);
+  const regimeMultiplier = regime === 'DAY_TRADE' ? 1 : 0.8;
+  const positionPressure = Math.max(0.5, 1 - (openStrategyPositions.length / Math.max(1, maxOpenPositions + 1)));
   const confidence = Number(signal.confidence || 0);
+  const confidenceMultiplier = Math.min(1, Math.max(0.25, confidence));
+  const rebalanceTargetPct = clamp01(baseTargetPct * regimeMultiplier * positionPressure * confidenceMultiplier, baseTargetPct);
+  const rebalanceBudgetUsd = marketPortfolioUsd * rebalanceTargetPct;
+  const targetNotional = availableCash * limits.targetNotionalPct;
   // Confidence scales target sizing while preserving a 25% floor so approved
   // low-confidence but valid entries still receive a non-trivial allocation.
   // Upper bound is clamped to 1.0 to prevent over-allocation from malformed
   // strategies that emit confidence values above the normalized [0,1] range.
-  const confidenceMultiplier = Math.min(1, Math.max(0.25, confidence));
   const confidenceScaledTarget = targetNotional * confidenceMultiplier;
   const riskBoundNotional = marketPortfolioUsd * (limits.perPositionMaxRisk / riskPct);
   const hasSmallAccountFlag = typeof executionContext.smallAccountMode === 'boolean';
@@ -146,6 +172,7 @@ export async function allocateSignal({ signal, positions, balancesByBroker, dail
 
   const notionalUsd = Math.min(
     Math.max(0, requestedNotional),
+    rebalanceBudgetUsd,
     marketRemainingUsd,
     availableCash,
     availableCash * maxSingleTradeCashPct,
@@ -186,6 +213,8 @@ export async function allocateSignal({ signal, positions, balancesByBroker, dail
     marketPortfolioUsd,
     confidence,
     requestedNotional,
+    rebalanceTargetPct,
+    rebalanceBudgetUsd,
     smallAccountMode,
     forceTrade,
     forceMinNotional,
@@ -196,8 +225,11 @@ export async function allocateSignal({ signal, positions, balancesByBroker, dail
       usdCash: coinbaseUsd,
       btcUsd,
       ethUsd,
+      currentHoldSymbolUsd: symbolHeldUsd,
       desiredNotionalUsd: notionalUsd,
       confidence,
+      regime,
+      maxOpenPositions,
     });
   }
   return decision;

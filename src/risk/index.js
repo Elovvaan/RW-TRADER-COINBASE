@@ -30,7 +30,7 @@ export function getKillSwitch() {
  * @returns {{ approved: boolean, reason: string, details: object }}
  */
 export function runRiskChecks(opts) {
-  const { productId, snapshot, proposedQuote, portfolioUSD, cooldownAfterStopMs } = opts;
+  const { productId, snapshot, proposedQuote, portfolioUSD, cooldownAfterStopMs, allowExistingPosition = false } = opts;
   const r = config.risk;
 
   // 1. Kill switch
@@ -97,7 +97,7 @@ export function runRiskChecks(opts) {
   }
 
   // 9. Already have a position in this product
-  if (portfolio.hasPosition(productId)) {
+  if (portfolio.hasPosition(productId) && !allowExistingPosition) {
     return _block('POSITION_EXISTS', { productId });
   }
 
