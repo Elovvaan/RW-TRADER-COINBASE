@@ -46,11 +46,23 @@ export function getAutonomyStatus(options = {}) {
     equitiesBlockedReasons.push('EQUITIES_AUTO_DISABLED');
   }
 
+  const allBlockers = [...new Set([
+    ...blockers,
+    ...cryptoBlockedReasons,
+    ...equitiesBlockedReasons,
+  ])];
   const cryptoReady = cryptoBlockedReasons.length === 0;
   const equitiesReady = equitiesBlockedReasons.length === 0;
 
-  if (blockers.length > 0) {
-    log.warn('BLOCKERS_DETECTED', { blockers });
+  if (allBlockers.length > 0) {
+    log.warn('BLOCKERS_DETECTED', {
+      blockers,
+      allBlockers,
+      markets: {
+        crypto: cryptoBlockedReasons,
+        equities: equitiesBlockedReasons,
+      },
+    });
   }
   if (!cryptoReady) {
     log.warn('CRYPTO_BLOCKED_REASON', { reasons: cryptoBlockedReasons });
