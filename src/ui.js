@@ -198,7 +198,7 @@ export function getDashboardHTML() {
       <span class="stat" id="chart-regime">Regime: —</span>
     </div>
     <div class="chart-wrap">
-      <svg id="main-chart" viewBox="0 0 1200 560" preserveAspectRatio="none" aria-label="Main chart"></svg>
+      <svg id="main-chart" viewBox="0 0 1200 560" preserveAspectRatio="none" aria-label="Main chart"><title>Candlestick chart</title></svg>
       <div class="chart-meta">
         <div class="stat">Confidence</div>
         <div class="confidence-bar"><div class="confidence-fill" id="confidence-fill" style="width:0%"></div></div>
@@ -291,6 +291,30 @@ export function getDashboardHTML() {
   const WATCH_SYMBOLS = ['BTC-USD','ETH-USD','SOL-USD','AAPL','TSLA','NVDA','SPY'];
   const CRYPTO_SET = new Set(['BTC-USD','ETH-USD','SOL-USD']);
   const MARKET_LABEL = { crypto: 'crypto · real', equities: 'stocks · paper' };
+  const EMPTY_VALUE = '—';
+  const CANDLE_BUCKET_MS = 5000;
+  const MAX_CANDLE_HISTORY = 1200;
+  const MAX_DISPLAY_CANDLES = 120;
+  const MAX_LOG_ENTRIES = 70;
+  const CHART_Y_PADDING_FACTOR = 0.14;
+  const DEFAULT_ORDER_ALLOCATION_USD = 100;
+  const MIN_ALLOCATION_USD = 50;
+  const ALLOCATION_MULTIPLIER = 0.5;
+  const CHART_WIDTH = 1200;
+  const CHART_HEIGHT = 560;
+  const CANDLE_STEPS = { '1m': 12, '5m': 60, '15m': 180 };
+  const CHART_COLORS = {
+    grid: '#203150',
+    label: '#7f96be',
+    up: '#33d69f',
+    down: '#ff6666',
+    live: '#66b3ff',
+    signalEntry: '#ffd166',
+    tp: '#2dd5a1',
+    sl: '#ff6666',
+    positionEntry: '#66b3ff',
+    text: '#d8e6ff',
+  };
   const state = {
     selectedSymbol: 'BTC-USD',
     timeframe: '1m',
@@ -309,17 +333,17 @@ export function getDashboardHTML() {
   };
   function fmt(v, dec = 2) {
     const n = Number(v);
-    if (!Number.isFinite(n)) return '—';
+    if (!Number.isFinite(n)) return EMPTY_VALUE;
     return n.toLocaleString('en-US', { minimumFractionDigits: dec, maximumFractionDigits: dec });
   }
   function signedPct(v) {
     const n = Number(v);
-    if (!Number.isFinite(n)) return '—';
+    if (!Number.isFinite(n)) return EMPTY_VALUE;
     return (n >= 0 ? '+' : '') + fmt(n, 2) + '%';
   }
   function usd(v, dec = 2) {
     const n = Number(v);
-    if (!Number.isFinite(n)) return '—';
+    if (!Number.isFinite(n)) return EMPTY_VALUE;
     return '$' + fmt(n, dec);
   }
   function clsSigned(v) {
@@ -328,9 +352,9 @@ export function getDashboardHTML() {
     return n >= 0 ? 'up' : 'down';
   }
   function age(ts) {
-    if (!ts) return '—';
+    if (!ts) return EMPTY_VALUE;
     const ms = Date.now() - new Date(ts).getTime();
-    if (!Number.isFinite(ms) || ms < 0) return '—';
+    if (!Number.isFinite(ms) || ms < 0) return EMPTY_VALUE;
     if (ms < 60000) return Math.floor(ms / 1000) + 's';
     if (ms < 3600000) return Math.floor(ms / 60000) + 'm';
     return Math.floor(ms / 3600000) + 'h';
@@ -338,9 +362,9 @@ export function getDashboardHTML() {
   function logLine(msg) {
     const line = '[' + new Date().toLocaleTimeString() + '] ' + msg;
     state.strategyLog.unshift(line);
-    state.strategyLog = state.strategyLog.slice(0, 70);
+    state.strategyLog = state.strategyLog.slice(0, MAX_LOG_ENTRIES);
     const el = document.getElementById('strategy-log');
-    if (el) el.textContent = state.strategyLog.join('\\n');
+    if (el) el.textContent = state.strategyLog.join('\n');
   }
   function inferRegime(signal) {
     if (!signal) return 'NO_SIGNAL';
@@ -402,7 +426,7 @@ export function getDashboardHTML() {
     if (!Number.isFinite(price)) return;
     if (!state.candles.has(symbol)) state.candles.set(symbol, []);
     const arr = state.candles.get(symbol);
-    const bucket = Math.floor(ts / 5000) * 5000;
+    const bucket = Math.floor(ts / CANDLE_BUCKET_MS) * CANDLE_BUCKET_MS;
     const last = arr[arr.length - 1];
     if (!last || last.t !== bucket) arr.push({ t: bucket, o: price, h: price, l: price, c: price });
     else {
@@ -410,30 +434,30 @@ export function getDashboardHTML() {
       last.l = Math.min(last.l, price);
       last.c = price;
     }
-    if (arr.length > 1200) arr.splice(0, arr.length - 1200);
+    if (arr.length > MAX_CANDLE_HISTORY) arr.splice(0, arr.length - MAX_CANDLE_HISTORY);
   }
   function aggregateCandles(symbol, timeframe) {
     const src = state.candles.get(symbol) || [];
-    const step = timeframe === '15m' ? 180 : timeframe === '5m' ? 60 : 12;
+    const step = CANDLE_STEPS[timeframe] || CANDLE_STEPS['1m'];
     const out = [];
     for (let i = 0; i < src.length; i += step) {
       const slice = src.slice(i, i + step);
       if (!slice.length) continue;
       const first = slice[0];
-      const last = slice[slice.length - 1];
+      const last = slice.at(-1);
       let h = -Infinity;
       let l = Infinity;
       slice.forEach(function(c) { h = Math.max(h, c.h); l = Math.min(l, c.l); });
       out.push({ t: first.t, o: first.o, h: h, l: l, c: last.c });
     }
-    return out.slice(-120);
+    return out.slice(-MAX_DISPLAY_CANDLES);
   }
   function renderTopBar() {
     const control = (state.dashboard && state.dashboard.controlPanel) || {};
     const crypto = (state.dashboard && state.dashboard.realCrypto) || {};
     const stocks = (state.dashboard && state.dashboard.simulatedStocks) || {};
     const portfolioValue =
-      Number((crypto.balances && crypto.balances.USD && crypto.balances.USD.available) || 0) +
+      Number(crypto.balances?.USD?.available || 0) +
       Number(stocks.paperCashUsd || 0) +
       Number(stocks.paperEquityValueUsd || 0);
     document.getElementById('top-portfolio').textContent = usd(portfolioValue);
@@ -467,10 +491,10 @@ export function getDashboardHTML() {
         '<tr class="' + (isSel ? 'active ' : '') + (w.position ? 'has-pos' : '') + '" data-symbol="' + symbol + '">' +
           '<td><div style="display:flex;gap:6px;align-items:center;">' +
             executionBadge(symbol) + '<b>' + symbol + '</b></div></td>' +
-          '<td class="num ' + priceClass + '">' + (Number.isFinite(w.price) ? usd(w.price) : '—') + '</td>' +
+          '<td class="num ' + priceClass + '">' + (Number.isFinite(w.price) ? usd(w.price) : EMPTY_VALUE) + '</td>' +
           '<td class="num ' + moveClass + '">' + signedPct(w.movePct) + '</td>' +
           '<td>' + sideBadge(w.signal) + '</td>' +
-          '<td>' + (w.position ? '<span class="badge badge-real">ACTIVE</span>' : '<span class="neutral">—</span>') + '</td>' +
+          '<td>' + (w.position ? '<span class="badge badge-real">ACTIVE</span>' : '<span class="neutral">' + EMPTY_VALUE + '</span>') + '</td>' +
         '</tr>'
       );
     });
@@ -497,13 +521,16 @@ export function getDashboardHTML() {
     const side = sig ? sig.side : 'WAIT';
     document.getElementById('chart-signal-badge').className = 'badge ' + (side === 'BUY' ? 'badge-buy' : side === 'SELL' ? 'badge-sell' : 'badge-wait');
     document.getElementById('chart-signal-badge').textContent = side;
-    document.getElementById('chart-live-line').textContent = 'Live: ' + (Number.isFinite(getSymbolPrice(symbol)) ? usd(getSymbolPrice(symbol)) : '—');
+    document.getElementById('chart-live-line').textContent = 'Live: ' + (Number.isFinite(getSymbolPrice(symbol)) ? usd(getSymbolPrice(symbol)) : EMPTY_VALUE);
     document.getElementById('chart-regime').textContent = 'Regime: ' + inferRegime(sig);
     const conf = Math.max(0, Math.min(1, Number(sig && sig.confidence || 0)));
     document.getElementById('confidence-fill').style.width = Math.round(conf * 100) + '%';
     document.getElementById('confidence-text').textContent = Math.round(conf * 100) + '%';
     if (!candles.length) {
-      svg.innerHTML = '<rect x="0" y="0" width="1200" height="560" fill="#0b1423"></rect><text x="24" y="40" fill="#8298be" font-size="18">Waiting for live ticks…</text>';
+      svg.innerHTML =
+        '<title>Candlestick chart for ' + symbol + ' on ' + state.timeframe + ' timeframe</title>' +
+        '<rect x="0" y="0" width="' + CHART_WIDTH + '" height="' + CHART_HEIGHT + '" fill="#0b1423"></rect>' +
+        '<text x="24" y="40" fill="#8298be" font-size="18">Waiting for live ticks…</text>';
       return;
     }
     let minP = Infinity;
@@ -512,11 +539,11 @@ export function getDashboardHTML() {
     [sig && sig.entry, sig && sig.tp, sig && sig.sl, pos && pos.entry, pos && pos.currentPrice].forEach(function(v) {
       if (Number.isFinite(Number(v))) { minP = Math.min(minP, Number(v)); maxP = Math.max(maxP, Number(v)); }
     });
-    const pad = (maxP - minP || 1) * 0.14;
+    const pad = (maxP - minP || 1) * CHART_Y_PADDING_FACTOR;
     minP -= pad;
     maxP += pad;
-    const W = 1200;
-    const H = 560;
+    const W = CHART_WIDTH;
+    const H = CHART_HEIGHT;
     const px = 52;
     const py = 20;
     const cw = (W - px * 2) / candles.length;
@@ -526,46 +553,54 @@ export function getDashboardHTML() {
     for (let i = 0; i <= 5; i += 1) {
       const yy = py + ((H - py * 2) / 5) * i;
       const p = maxP - ((maxP - minP) / 5) * i;
-      lines.push('<line x1="' + px + '" y1="' + yy + '" x2="' + (W - px) + '" y2="' + yy + '" stroke="#203150" stroke-width="1" />');
-      lines.push('<text x="8" y="' + (yy + 4) + '" fill="#7f96be" font-size="12">' + fmt(p, 2) + '</text>');
+      lines.push('<line x1="' + px + '" y1="' + yy + '" x2="' + (W - px) + '" y2="' + yy + '" stroke="' + CHART_COLORS.grid + '" stroke-width="1" />');
+      lines.push('<text x="8" y="' + (yy + 4) + '" fill="' + CHART_COLORS.label + '" font-size="12">' + fmt(p, 2) + '</text>');
     }
     const bars = candles.map(function(c, i) {
       const up = c.c >= c.o;
-      const wick = '<line x1="' + x(i) + '" y1="' + y(c.h) + '" x2="' + x(i) + '" y2="' + y(c.l) + '" stroke="' + (up ? '#33d69f' : '#ff6666') + '" stroke-width="1.3" />';
+      const wick = '<line x1="' + x(i) + '" y1="' + y(c.h) + '" x2="' + x(i) + '" y2="' + y(c.l) + '" stroke="' + (up ? CHART_COLORS.up : CHART_COLORS.down) + '" stroke-width="1.3" />';
       const bodyY = Math.min(y(c.o), y(c.c));
       const bodyH = Math.max(1.5, Math.abs(y(c.o) - y(c.c)));
-      const body = '<rect x="' + (x(i) - Math.max(1.2, cw * 0.35)) + '" y="' + bodyY + '" width="' + Math.max(2.4, cw * 0.7) + '" height="' + bodyH + '" fill="' + (up ? '#33d69f' : '#ff6666') + '" opacity=".85" />';
+      const body = '<rect x="' + (x(i) - Math.max(1.2, cw * 0.35)) + '" y="' + bodyY + '" width="' + Math.max(2.4, cw * 0.7) + '" height="' + bodyH + '" fill="' + (up ? CHART_COLORS.up : CHART_COLORS.down) + '" opacity=".85" />';
       return wick + body;
     }).join('');
     const last = candles[candles.length - 1];
     const liveY = y(last.c);
     const overlays = [];
-    overlays.push('<line x1="' + px + '" y1="' + liveY + '" x2="' + (W - px) + '" y2="' + liveY + '" stroke="#66b3ff" stroke-width="1.2" stroke-dasharray="4 4" />');
-    overlays.push('<text x="' + (W - 126) + '" y="' + (liveY - 6) + '" fill="#66b3ff" font-size="12">LIVE ' + fmt(last.c, 2) + '</text>');
+    overlays.push('<line x1="' + px + '" y1="' + liveY + '" x2="' + (W - px) + '" y2="' + liveY + '" stroke="' + CHART_COLORS.live + '" stroke-width="1.2" stroke-dasharray="4 4" />');
+    overlays.push('<text x="' + (W - 126) + '" y="' + (liveY - 6) + '" fill="' + CHART_COLORS.live + '" font-size="12">LIVE ' + fmt(last.c, 2) + '</text>');
     function hline(v, color, label) {
       if (!Number.isFinite(Number(v))) return;
       const yy = y(Number(v));
       overlays.push('<line x1="' + px + '" y1="' + yy + '" x2="' + (W - px) + '" y2="' + yy + '" stroke="' + color + '" stroke-width="1" stroke-dasharray="2 4" />');
       overlays.push('<text x="' + (px + 8) + '" y="' + (yy - 4) + '" fill="' + color + '" font-size="12">' + label + ' ' + fmt(Number(v), 2) + '</text>');
     }
-    hline(sig && sig.entry, '#ffd166', 'Signal Entry');
-    hline(sig && sig.tp, '#2dd5a1', 'TP');
-    hline(sig && sig.sl, '#ff6666', 'SL');
-    hline(pos && pos.entry, '#66b3ff', 'Position Entry');
+    hline(sig && sig.entry, CHART_COLORS.signalEntry, 'Signal Entry');
+    hline(sig && sig.tp, CHART_COLORS.tp, 'TP');
+    hline(sig && sig.sl, CHART_COLORS.sl, 'SL');
+    hline(pos && pos.entry, CHART_COLORS.positionEntry, 'Position Entry');
     if (sig) {
       const lastX = x(candles.length - 1);
       const signalY = y(Number(sig.entry || last.c));
-      overlays.push('<circle cx="' + lastX + '" cy="' + signalY + '" r="5" fill="' + (sig.side === 'BUY' ? '#2dd5a1' : sig.side === 'SELL' ? '#ff6666' : '#ffd166') + '" />');
-      overlays.push('<text x="' + (lastX + 8) + '" y="' + (signalY + 4) + '" fill="#d8e6ff" font-size="12">' + sig.side + '</text>');
+      overlays.push('<circle cx="' + lastX + '" cy="' + signalY + '" r="5" fill="' + (sig.side === 'BUY' ? CHART_COLORS.tp : sig.side === 'SELL' ? CHART_COLORS.sl : CHART_COLORS.signalEntry) + '" />');
+      overlays.push('<text x="' + (lastX + 8) + '" y="' + (signalY + 4) + '" fill="' + CHART_COLORS.text + '" font-size="12">' + sig.side + '</text>');
     }
     const symbolFills = state.fills.filter(function(f) { return f.symbol === symbol; }).slice(0, 8);
     symbolFills.forEach(function(f, idx) {
       const rel = 1 - (idx / Math.max(1, symbolFills.length));
       const fx = px + rel * (W - px * 2);
       const fy = y(Number(f.price || last.c));
-      overlays.push('<path d="M ' + (fx - 5) + ' ' + (fy + 5) + ' L ' + fx + ' ' + (fy - 5) + ' L ' + (fx + 5) + ' ' + (fy + 5) + ' Z" fill="' + (String(f.side).toUpperCase() === 'BUY' ? '#2dd5a1' : '#ff6666') + '" opacity=".85" />');
+      overlays.push('<path d="M ' + (fx - 5) + ' ' + (fy + 5) + ' L ' + fx + ' ' + (fy - 5) + ' L ' + (fx + 5) + ' ' + (fy + 5) + ' Z" fill="' + (String(f.side).toUpperCase() === 'BUY' ? CHART_COLORS.tp : CHART_COLORS.sl) + '" opacity=".85" />');
     });
-    svg.innerHTML = '<rect x="0" y="0" width="1200" height="560" fill="#0b1423"></rect>' + lines.join('') + bars + overlays.join('');
+    svg.innerHTML =
+      '<title>Candlestick chart for ' + symbol + ' on ' + state.timeframe + ' timeframe</title>' +
+      '<rect x="0" y="0" width="' + CHART_WIDTH + '" height="' + CHART_HEIGHT + '" fill="#0b1423"></rect>' +
+      lines.join('') + bars + overlays.join('');
+  }
+  function calculateDefaultOrderSize(entryPrice) {
+    const p = Number(entryPrice);
+    if (!Number.isFinite(p) || p <= 0) return EMPTY_VALUE;
+    return fmt(DEFAULT_ORDER_ALLOCATION_USD / p, 6);
   }
   function renderRightPanel() {
     const symbol = state.selectedSymbol;
@@ -574,11 +609,11 @@ export function getDashboardHTML() {
     const watch = state.watch.get(symbol) || {};
     document.getElementById('sel-symbol').textContent = symbol + ' · ' + (CRYPTO_SET.has(symbol) ? 'REAL' : 'PAPER');
     document.getElementById('sel-signal').innerHTML = sideBadge(sig ? sig.side : 'WAIT');
-    document.getElementById('sel-confidence').textContent = sig ? Math.round(Number(sig.confidence || 0) * 100) + '%' : '—';
+    document.getElementById('sel-confidence').textContent = sig ? Math.round(Number(sig.confidence || 0) * 100) + '%' : EMPTY_VALUE;
     document.getElementById('sel-side').textContent = sig ? sig.side : 'WAIT';
-    document.getElementById('sel-size').textContent = pos ? fmt(pos.size, 6) : (sig && Number.isFinite(sig.entry) ? fmt((100 / Number(sig.entry)), 6) : '—');
-    document.getElementById('sel-allocation').textContent = Number.isFinite(watch.price) ? usd(Math.max(50, watch.price * 0.5)) : '—';
-    document.getElementById('sel-tpsl').textContent = (sig && Number.isFinite(sig.tp) ? usd(sig.tp) : '—') + ' / ' + (sig && Number.isFinite(sig.sl) ? usd(sig.sl) : '—');
+    document.getElementById('sel-size').textContent = pos ? fmt(pos.size, 6) : calculateDefaultOrderSize(sig && sig.entry);
+    document.getElementById('sel-allocation').textContent = Number.isFinite(watch.price) ? usd(Math.max(MIN_ALLOCATION_USD, watch.price * ALLOCATION_MULTIPLIER)) : EMPTY_VALUE;
+    document.getElementById('sel-tpsl').textContent = (sig && Number.isFinite(sig.tp) ? usd(sig.tp) : EMPTY_VALUE) + ' / ' + (sig && Number.isFinite(sig.sl) ? usd(sig.sl) : EMPTY_VALUE);
     document.getElementById('sel-position').textContent = pos
       ? ('OPEN ' + fmt(pos.size, 4) + ' @ ' + usd(pos.entry) + ' · PnL ' + usd(pos.unrealizedPnL || 0))
       : 'Flat';
@@ -588,7 +623,7 @@ export function getDashboardHTML() {
     if (!state.positions.length) posBody.innerHTML = '<tr><td colspan="8" class="neutral">No open positions</td></tr>';
     else {
       posBody.innerHTML = state.positions.map(function(p) {
-        const side = Number(p.size || 0) >= 0 ? 'LONG' : 'SHORT';
+        const side = Number(p.size || 0) > 0 ? 'LONG' : 'SHORT';
         return '<tr class="' + (p.symbol === state.selectedSymbol ? 'has-pos' : '') + '">' +
           '<td>' + executionBadge(p.symbol) + '</td>' +
           '<td>' + p.symbol + '</td>' +
@@ -608,15 +643,15 @@ export function getDashboardHTML() {
         const cfg = o.order_configuration || {};
         const marketIoc = cfg.market_market_ioc || {};
         const limitGtc = cfg.limit_limit_gtc || {};
-        const side = o.side || o.order_side || '—';
-        const base = marketIoc.base_size || limitGtc.base_size || o.base_size || '—';
-        const limit = limitGtc.limit_price || o.limit_price || '—';
+        const side = o.side || o.order_side || EMPTY_VALUE;
+        const base = marketIoc.base_size || limitGtc.base_size || o.base_size || EMPTY_VALUE;
+        const limit = limitGtc.limit_price || o.limit_price || EMPTY_VALUE;
         return '<tr>' +
           '<td>' + executionBadge(o.product_id || o.symbol || 'BTC-USD') + '</td>' +
-          '<td>' + (o.product_id || o.symbol || '—') + '</td>' +
+          '<td>' + (o.product_id || o.symbol || EMPTY_VALUE) + '</td>' +
           '<td>' + side + '</td>' +
-          '<td class="num">' + (base === '—' ? '—' : fmt(base, 6)) + '</td>' +
-          '<td class="num">' + (limit === '—' ? '—' : usd(limit)) + '</td>' +
+          '<td class="num">' + (base === EMPTY_VALUE ? EMPTY_VALUE : fmt(base, 6)) + '</td>' +
+          '<td class="num">' + (limit === EMPTY_VALUE ? EMPTY_VALUE : usd(limit)) + '</td>' +
           '<td>' + (o.status || 'OPEN') + '</td>' +
           '<td>' + age(o.created_time || o.createdAt || o.ts) + '</td>' +
         '</tr>';
@@ -626,13 +661,21 @@ export function getDashboardHTML() {
     if (!state.fills.length) fillsBody.innerHTML = '<tr><td colspan="6" class="neutral">No recent fills</td></tr>';
     else {
       fillsBody.innerHTML = state.fills.slice(0, 50).map(function(f) {
-        const id = String(f.tradeId || f.orderId || f.filledAt || Math.random());
+        const id = [
+          String(f.tradeId || ''),
+          String(f.orderId || ''),
+          String(f.filledAt || ''),
+          String(f.symbol || ''),
+          String(f.side || ''),
+          String(f.price || ''),
+          String(f.size || ''),
+        ].join('|');
         const isNew = !state.fillsSeen.has(id);
         state.fillsSeen.add(id);
         return '<tr class="' + (isNew ? 'fill-new' : '') + '">' +
           '<td>' + executionBadge(f.symbol || 'BTC-USD') + '</td>' +
-          '<td>' + (f.symbol || '—') + '</td>' +
-          '<td>' + (f.side || '—') + '</td>' +
+          '<td>' + (f.symbol || EMPTY_VALUE) + '</td>' +
+          '<td>' + (f.side || EMPTY_VALUE) + '</td>' +
           '<td class="num">' + fmt(f.size, 6) + '</td>' +
           '<td class="num">' + usd(f.price) + '</td>' +
           '<td>' + age(f.filledAt) + '</td>' +
@@ -644,11 +687,11 @@ export function getDashboardHTML() {
     else {
       signalsBody.innerHTML = state.signalHistory.slice(0, 80).map(function(s) {
         return '<tr>' +
-          '<td>' + (s.market || '—') + '</td>' +
-          '<td>' + (s.symbol || '—') + '</td>' +
+          '<td>' + (s.market || EMPTY_VALUE) + '</td>' +
+          '<td>' + (s.symbol || EMPTY_VALUE) + '</td>' +
           '<td>' + sideBadge(s.side || 'WAIT') + '</td>' +
           '<td class="num">' + Math.round(Number(s.confidence || 0) * 100) + '%</td>' +
-          '<td>' + (s.reason || '—') + '</td>' +
+          '<td>' + (s.reason || EMPTY_VALUE) + '</td>' +
           '<td>' + age(s.ts) + '</td>' +
         '</tr>';
       }).join('');
@@ -662,10 +705,10 @@ export function getDashboardHTML() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(patch),
       });
-      logLine('Control updated: ' + JSON.stringify(patch));
+      logLine('Control updated: ' + Object.keys(patch).join(','));
       await load();
     } catch (_err) {
-      logLine('Control update failed');
+      logLine('Control update failed: ' + (_err && _err.message ? _err.message : String(_err || 'unknown')));
     } finally {
       state.pendingControls = false;
     }
@@ -700,10 +743,10 @@ export function getDashboardHTML() {
       renderChart();
     });
     document.getElementById('manual-buy').addEventListener('click', function() {
-      logLine('Manual BUY requested for ' + state.selectedSymbol + ' (authority-gated).');
+      logLine('Manual BUY requested for ' + state.selectedSymbol + ' (UI-only preview; backend execution API not wired).');
     });
     document.getElementById('manual-sell').addEventListener('click', function() {
-      logLine('Manual SELL requested for ' + state.selectedSymbol + ' (authority-gated).');
+      logLine('Manual SELL requested for ' + state.selectedSymbol + ' (UI-only preview; backend execution API not wired).');
     });
   }
   function reconcileSignals(signals) {
@@ -736,7 +779,13 @@ export function getDashboardHTML() {
     try {
       const responses = await Promise.all([
         fetch('/unified/dashboard').then(function(r) { return r.json(); }),
-        fetch('/orders').then(function(r) { return r.json(); }).catch(function() { return { open: [] }; }),
+        fetch('/orders').then(function(r) {
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          return r.json();
+        }).catch(function(err) {
+          logLine('Orders endpoint failed (' + String(err || 'unknown') + '); showing empty open-orders list');
+          return { open: [] };
+        }),
       ]);
       const dashboard = responses[0] || {};
       const ordersResp = responses[1] || { open: [] };
@@ -762,7 +811,7 @@ export function getDashboardHTML() {
         logLine('Market refresh: ' + state.signals.length + ' signals · ' + state.positions.length + ' positions · ' + state.fills.length + ' fills');
       }
     } catch (_err) {
-      logLine('Refresh failed: API unavailable');
+      logLine('Refresh failed: ' + (_err && _err.message ? _err.message : String(_err || 'API unavailable')));
     }
   }
   bindTabs();
