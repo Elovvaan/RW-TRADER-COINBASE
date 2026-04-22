@@ -138,16 +138,17 @@ export class TradingAgent {
 
       if (!config.cryptoAutoEnabled) {
         log.info('CRYPTO_ENGINE_DISABLED', { trigger, reason: 'CRYPTO_AUTO_DISABLED' });
-      }
-      for (const productId of config.tradingPairs) {
-        if (!config.cryptoAutoEnabled) break;
+      } else {
+        for (const productId of config.tradingPairs) {
 
-        if (getKillSwitch()) {
-          log.info('SIGNAL_SKIPPED', { trigger, productId, reason: 'KILL_SWITCH_ACTIVE' });
-          continue;
-        }
+          // Early gate avoids signal generation work while kill switch is active;
+          // execution-router also enforces the same safety before order routing.
+          if (getKillSwitch()) {
+            log.info('SIGNAL_SKIPPED', { trigger, productId, reason: 'KILL_SWITCH_ACTIVE' });
+            continue;
+          }
 
-        const snap = this.feed.getSnapshot(productId);
+          const snap = this.feed.getSnapshot(productId);
         if (!snap) {
           summary.pairsEvaluated += 1;
           summary.skippedSignals += 1;
@@ -224,6 +225,7 @@ export class TradingAgent {
           summary.pairsEvaluated += 1;
           summary.skippedSignals += 1;
           log.error('SIGNAL_CYCLE_ERROR', { productId, error: err.message });
+        }
         }
       }
 

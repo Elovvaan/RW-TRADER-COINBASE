@@ -34,7 +34,8 @@ class UnifiedPositionRegistry {
       targetMap.set(key, this._toRecord(item, defaultBroker, executionType));
     }
 
-    for (const key of Array.from(targetMap.keys())) {
+    for (const key of targetMap.keys()) {
+      if (!key.startsWith(`${defaultBroker}:`)) continue;
       if (!nextKeys.has(key)) {
         targetMap.delete(key);
       }

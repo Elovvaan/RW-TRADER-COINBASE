@@ -164,4 +164,14 @@ if (config.authority === 'AUTO' && config.dryRun) {
   throw new Error('[CONFIG] AUTHORITY=AUTO requires DRY_RUN=false. Set DRY_RUN=false intentionally to enable live execution.');
 }
 
+if ((process.env.ENABLE_CRYPTO ?? '') !== '' && (process.env.CRYPTO_AUTO_ENABLED ?? '') === '') {
+  process.stderr.write('[CONFIG] ENABLE_CRYPTO is deprecated; use CRYPTO_AUTO_ENABLED.\n');
+}
+if ((process.env.ENABLE_EQUITIES ?? '') !== '' && (process.env.STOCK_PAPER_ENABLED ?? '') === '') {
+  process.stderr.write('[CONFIG] ENABLE_EQUITIES is deprecated; use STOCK_PAPER_ENABLED.\n');
+}
+if ((process.env.KILL_SWITCH ?? '') !== '' && (process.env.GLOBAL_KILL_SWITCH ?? '') === '') {
+  process.stderr.write('[CONFIG] KILL_SWITCH is deprecated; use GLOBAL_KILL_SWITCH.\n');
+}
+
 export default config;

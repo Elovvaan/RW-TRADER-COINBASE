@@ -53,6 +53,10 @@ export async function allocateSignal({ signal, positions, balancesByBroker, dail
   const availableCash = marketCash;
   const targetNotional = availableCash * limits.targetNotionalPct;
   const confidence = Number(signal.confidence || 0);
+  // Confidence scales target sizing while preserving a 25% floor so approved
+  // low-confidence but valid entries still receive a non-trivial allocation.
+  // Upper bound is clamped to 1.0 to prevent over-allocation from malformed
+  // strategies that emit confidence values above the normalized [0,1] range.
   const confidenceMultiplier = Math.min(1, Math.max(0.25, confidence));
   const confidenceScaledTarget = targetNotional * confidenceMultiplier;
   const riskBoundNotional = marketPortfolioUsd * (limits.perPositionMaxRisk / riskPct);

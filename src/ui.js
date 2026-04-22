@@ -137,6 +137,23 @@ export function getDashboardHTML() {
   function rowFallback(cols, text) {
     return '<tr><td colspan="' + cols + '" class="muted">' + text + '</td></tr>';
   }
+  function renderPositionRow(p, includeMarkAge, nowMs) {
+    const executionType = p.executionType || 'UNKNOWN';
+    const cells = [
+      '<td>' + executionType + '</td>',
+      '<td>' + p.symbol + '</td>',
+      '<td>' + fmt(p.size, 6) + '</td>',
+      '<td>$' + fmt(p.entry) + '</td>',
+      '<td>$' + fmt(p.currentPrice) + '</td>',
+      '<td class="' + cssSigned(p.unrealizedPnL) + '">' + signedUsd(p.unrealizedPnL) + '</td>',
+      '<td>' + ageFromMs(p.positionAgeMs) + '</td>',
+    ];
+    if (includeMarkAge) {
+      const markAgeMs = p.lastMarketUpdateTs ? (nowMs - p.lastMarketUpdateTs) : null;
+      cells.push('<td>' + ageFromMs(markAgeMs) + '</td>');
+    }
+    return '<tr>' + cells.join('') + '</tr>';
+  }
   async function setControl(patch) {
     await fetch('/control', {
       method: 'POST',
@@ -150,6 +167,7 @@ export function getDashboardHTML() {
     const control = data.controlPanel || {};
     const crypto = data.realCrypto || {};
     const stocks = data.simulatedStocks || {};
+    const nowMs = Date.now();
 
     document.getElementById('state-crypto').textContent = control.cryptoAutoEnabled ? 'ON' : 'OFF';
     document.getElementById('state-crypto').className = 'v ' + (control.cryptoAutoEnabled ? 'ok' : 'bad');
@@ -176,12 +194,12 @@ export function getDashboardHTML() {
 
     const cryptoPos = document.getElementById('crypto-positions');
     cryptoPos.innerHTML = (crypto.openPositions || []).length
-      ? crypto.openPositions.map((p) => '<tr><td>' + (p.executionType || 'REAL') + '</td><td>' + p.symbol + '</td><td>' + fmt(p.size, 6) + '</td><td>$' + fmt(p.entry) + '</td><td>$' + fmt(p.currentPrice) + '</td><td class="' + cssSigned(p.unrealizedPnL) + '">' + signedUsd(p.unrealizedPnL) + '</td><td>' + ageFromMs(p.positionAgeMs) + '</td><td>' + ageFromMs(p.lastMarketUpdateAgeMs) + '</td></tr>').join('')
+      ? crypto.openPositions.map((p) => renderPositionRow(p, true, nowMs)).join('')
       : rowFallback(8, 'No crypto positions');
 
     const stockPos = document.getElementById('stock-positions');
     stockPos.innerHTML = (stocks.openPositions || []).length
-      ? stocks.openPositions.map((p) => '<tr><td>' + (p.executionType || 'PAPER') + '</td><td>' + p.symbol + '</td><td>' + fmt(p.size, 6) + '</td><td>$' + fmt(p.entry) + '</td><td>$' + fmt(p.currentPrice) + '</td><td class="' + cssSigned(p.unrealizedPnL) + '">' + signedUsd(p.unrealizedPnL) + '</td><td>' + ageFromMs(p.positionAgeMs) + '</td></tr>').join('')
+      ? stocks.openPositions.map((p) => renderPositionRow(p, false, nowMs)).join('')
       : rowFallback(7, 'No stock positions');
 
     const cryptoFills = document.getElementById('crypto-fills');

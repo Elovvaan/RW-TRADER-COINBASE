@@ -41,8 +41,21 @@ export class UnifiedExecutionRouter {
       log.info('STOCK_ENGINE_DISABLED', { market: signal.market, symbol: signal.symbol, reason: 'STOCK_PAPER_DISABLED' });
       return { executed: false, reason: 'EQUITIES_DISABLED' };
     }
-    if (getKillSwitch()) return { executed: false, reason: 'GLOBAL_KILL_SWITCH_ACTIVE' };
-    if (config.authority === 'OFF') return { executed: false, reason: 'AUTHORITY_OFF' };
+    const killSwitchBlock = this._blockIf({
+      condition: getKillSwitch(),
+      market: signal.market,
+      symbol: signal.symbol,
+      reason: 'GLOBAL_KILL_SWITCH_ACTIVE',
+    });
+    if (killSwitchBlock) return killSwitchBlock;
+
+    const authorityBlock = this._blockIf({
+      condition: config.authority === 'OFF',
+      market: signal.market,
+      symbol: signal.symbol,
+      reason: 'AUTHORITY_OFF',
+    });
+    if (authorityBlock) return authorityBlock;
 
     const adapter = this.adapters[signal.market];
     if (!adapter) return { executed: false, reason: 'UNSUPPORTED_MARKET' };
@@ -114,6 +127,12 @@ export class UnifiedExecutionRouter {
     }
 
     return adapter.executeSignal({ signal, notionalUsd: allocation.notionalUsd });
+  }
+
+  _blockIf({ condition, market, symbol, reason }) {
+    if (!condition) return null;
+    log.info('EXECUTION_BLOCKED', { market, symbol, reason });
+    return { executed: false, reason };
   }
 }
 

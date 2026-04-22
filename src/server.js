@@ -137,18 +137,18 @@ const routes = {
   'GET /health': async (_req, res) => {
     const hasCredentials = config.hasCoinbaseCredentials;
     const agentRunning = Boolean(_agent);
-      const cryptoReady = !config.cryptoAutoEnabled || hasCredentials;
-      const equitiesReady = !config.stockPaperEnabled || agentRunning;
-      json(res, 200, {
-        status: agentRunning && cryptoReady && equitiesReady ? 'ok' : 'degraded',
-        ts: new Date().toISOString(),
-        controls: getControlState(),
-        pairs: config.tradingPairs,
-        wsConnected: _agent?.feed?.connected ?? false,
-        features: {
-          enableCrypto: config.cryptoAutoEnabled,
-          enableEquities: config.stockPaperEnabled,
-        },
+    const cryptoReady = !config.cryptoAutoEnabled || hasCredentials;
+    const equitiesReady = !config.stockPaperEnabled || agentRunning;
+    json(res, 200, {
+      status: agentRunning && cryptoReady && equitiesReady ? 'ok' : 'degraded',
+      ts: new Date().toISOString(),
+      controls: getControlState(),
+      pairs: config.tradingPairs,
+      wsConnected: _agent?.feed?.connected ?? false,
+      features: {
+        enableCrypto: config.cryptoAutoEnabled,
+        enableEquities: config.stockPaperEnabled,
+      },
       equities: {
         broker: stockAdapter.broker,
         symbols: config.stockSymbols,
