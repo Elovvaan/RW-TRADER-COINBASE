@@ -21,8 +21,8 @@ async function main() {
   });
 
   let agent = null;
-  const cryptoEnabled = config.enableCrypto;
-  const equitiesEnabled = config.enableEquities;
+  const cryptoEnabled = config.cryptoAutoEnabled;
+  const equitiesEnabled = config.stockPaperEnabled;
 
   if (cryptoEnabled && !config.hasCoinbaseCredentials) {
     log.warn('STARTUP_DEGRADED', {

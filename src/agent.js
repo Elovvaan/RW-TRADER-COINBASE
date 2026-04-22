@@ -38,13 +38,15 @@ export class TradingAgent {
       stockSymbols: config.stockSymbols,
       enableCrypto: config.enableCrypto,
       enableEquities: config.enableEquities,
+      cryptoAutoEnabled: config.cryptoAutoEnabled,
+      stockPaperEnabled: config.stockPaperEnabled,
       authority: config.authority,
       dryRun: config.dryRun,
       scanIntervalMs: config.scanIntervalMs,
       signalConfidenceThreshold: config.signalConfidenceThreshold,
     });
 
-    if (config.enableCrypto) {
+    if (config.cryptoAutoEnabled) {
       // Keep position telemetry synced to incoming market ticks
       this.feed.on('ticker', this._onTicker);
       await this.feed.start();
@@ -72,7 +74,7 @@ export class TradingAgent {
     this.running = false;
     clearInterval(this._signalTimer);
     clearInterval(this._exitTimer);
-    if (config.enableCrypto) {
+    if (config.cryptoAutoEnabled) {
       this.feed.off('ticker', this._onTicker);
       this.feed.stop();
     }
@@ -134,110 +136,102 @@ export class TradingAgent {
     try {
       const priceMap = this._buildPriceMap();
 
-      for (const productId of config.tradingPairs) {
-        if (!config.enableCrypto) break;
+      if (!config.cryptoAutoEnabled) {
+        log.info('CRYPTO_ENGINE_DISABLED', { trigger, reason: 'CRYPTO_AUTO_DISABLED' });
+      } else {
+        for (const productId of config.tradingPairs) {
+          // Early gate avoids signal generation work while kill switch is active;
+          // execution-router also enforces the same safety before order routing.
+          if (getKillSwitch()) {
+            log.info('SIGNAL_SKIPPED', { trigger, productId, reason: 'KILL_SWITCH_ACTIVE' });
+            continue;
+          }
 
-        if (getKillSwitch()) {
-          log.info('SIGNAL_SKIPPED', { trigger, productId, reason: 'KILL_SWITCH_ACTIVE' });
-          continue;
-        }
-
-        // Skip if position already open
-        if (portfolio.hasPosition(productId)) {
-          summary.pairsEvaluated += 1;
-          summary.skippedSignals += 1;
-          log.info('PAIR_EVALUATED', {
-            trigger,
-            scanId: summary.scanId,
-            productId,
-            action: 'SKIP',
-            reason: 'POSITION_EXISTS',
-          });
-          log.info('SIGNAL_SKIPPED', { trigger, scanId: summary.scanId, productId, reason: 'POSITION_EXISTS' });
-          continue;
-        }
-
-        const snap = this.feed.getSnapshot(productId);
-        if (!snap) {
-          summary.pairsEvaluated += 1;
-          summary.skippedSignals += 1;
-          log.warn('PAIR_EVALUATED', {
-            trigger,
-            scanId: summary.scanId,
-            productId,
-            action: 'SKIP',
-            reason: 'NO_SNAPSHOT',
-          });
-          log.info('SIGNAL_SKIPPED', { trigger, scanId: summary.scanId, productId, reason: 'NO_SNAPSHOT' });
-          continue;
-        }
-
-        try {
-          const signal = await generateSignal(productId, snap.price);
-          const unifiedSignal = normalizeCryptoSignal(signal);
-          this.signals[`crypto:${productId}`] = unifiedSignal;
-          summary.pairsEvaluated += 1;
-
-          log.info('PAIR_EVALUATED', {
-            trigger,
-            scanId: summary.scanId,
-            productId,
-            action: signal.action,
-            reason: signal.reason,
-            confidence: signal.confidence,
-            snapshotAgeMs: typeof snap.ts === 'number' ? Date.now() - snap.ts : null,
-          });
-
-          if (signal.action !== 'BUY') {
+          const snap = this.feed.getSnapshot(productId);
+          if (!snap) {
+            summary.pairsEvaluated += 1;
             summary.skippedSignals += 1;
-            log.info('SIGNAL_SKIPPED', {
+            log.warn('PAIR_EVALUATED', {
               trigger,
               scanId: summary.scanId,
               productId,
-              reason: signal.reason || 'NO_BUY_SIGNAL',
+              action: 'SKIP',
+              reason: 'NO_SNAPSHOT',
+            });
+            log.info('SIGNAL_SKIPPED', { trigger, scanId: summary.scanId, productId, reason: 'NO_SNAPSHOT' });
+            continue;
+          }
+
+          try {
+            const signal = await generateSignal(productId, snap.price);
+            const unifiedSignal = normalizeCryptoSignal(signal);
+            this.signals[`crypto:${productId}`] = unifiedSignal;
+            summary.pairsEvaluated += 1;
+
+            log.info('PAIR_EVALUATED', {
+              trigger,
+              scanId: summary.scanId,
+              productId,
               action: signal.action,
+              reason: signal.reason,
               confidence: signal.confidence,
+              snapshotAgeMs: typeof snap.ts === 'number' ? Date.now() - snap.ts : null,
             });
-            continue;
-          }
 
-          if (signal.confidence < config.signalConfidenceThreshold) {
-            summary.skippedSignals += 1;
-            log.info('SIGNAL_SKIPPED', {
-              trigger,
-              scanId: summary.scanId,
-              productId,
-              reason: 'CONFIDENCE_BELOW_THRESHOLD',
-              confidence: signal.confidence,
-              threshold: config.signalConfidenceThreshold,
-            });
-            continue;
-          }
+            if (signal.action !== 'BUY') {
+              summary.skippedSignals += 1;
+              log.info('SIGNAL_SKIPPED', {
+                trigger,
+                scanId: summary.scanId,
+                productId,
+                reason: signal.reason || 'NO_BUY_SIGNAL',
+                action: signal.action,
+                confidence: signal.confidence,
+              });
+              continue;
+            }
 
-          const execution = await unifiedExecutionRouter.route({
-            signal: unifiedSignal,
-            snapshot: snap,
-            priceMap,
-          });
-          if (execution?.executed) {
-            summary.executedTrades += 1;
-          } else {
-            summary.skippedSignals += 1;
-            log.info('SIGNAL_SKIPPED', {
-              trigger,
-              scanId: summary.scanId,
-              productId,
-              reason: execution?.reason || 'EXECUTION_NOT_PERFORMED',
+            if (signal.confidence < config.signalConfidenceThreshold) {
+              summary.skippedSignals += 1;
+              log.info('SIGNAL_SKIPPED', {
+                trigger,
+                scanId: summary.scanId,
+                productId,
+                reason: 'CONFIDENCE_BELOW_THRESHOLD',
+                confidence: signal.confidence,
+                threshold: config.signalConfidenceThreshold,
+              });
+              continue;
+            }
+
+            const execution = await unifiedExecutionRouter.route({
+              signal: unifiedSignal,
+              snapshot: snap,
+              priceMap,
             });
+            if (execution?.executed) {
+              summary.executedTrades += 1;
+            } else {
+              summary.skippedSignals += 1;
+              log.info('SIGNAL_SKIPPED', {
+                trigger,
+                scanId: summary.scanId,
+                productId,
+                reason: execution?.reason || 'EXECUTION_NOT_PERFORMED',
+              });
+            }
+          } catch (err) {
+            summary.pairsEvaluated += 1;
+            summary.skippedSignals += 1;
+            log.error('SIGNAL_CYCLE_ERROR', { productId, error: err.message });
           }
-        } catch (err) {
-          summary.pairsEvaluated += 1;
-          summary.skippedSignals += 1;
-          log.error('SIGNAL_CYCLE_ERROR', { productId, error: err.message });
         }
       }
 
-      if (config.enableEquities) {
+      if (!config.stockPaperEnabled) {
+        log.info('STOCK_ENGINE_DISABLED', { trigger, reason: 'STOCK_PAPER_DISABLED' });
+      }
+      if (config.stockPaperEnabled) {
         for (const symbol of config.stockSymbols) {
           const equitySignal = normalizeEquitySignal(stockAdapter.generateSignal(symbol));
           this.signals[`equities:${symbol}`] = equitySignal;
@@ -275,7 +269,7 @@ export class TradingAgent {
   async _runExitCycle() {
     if (!this.running || getKillSwitch()) return;
 
-    if (!config.enableCrypto) return;
+    if (!config.cryptoAutoEnabled) return;
 
     const positions = portfolio.getAllPositions();
     if (!positions.length) return;

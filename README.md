@@ -79,8 +79,10 @@ cp .env.example .env
 ```
 
 Unified dual-broker switches:
-- `ENABLE_CRYPTO=true` keeps existing Coinbase path active.
-- `ENABLE_EQUITIES=true` enables stock adapter routing.
+- `CRYPTO_AUTO_ENABLED=true` enables LIVE Coinbase execution engine.
+- `STOCK_PAPER_ENABLED=true` enables PAPER stock simulation engine.
+- `GLOBAL_KILL_SWITCH=false` controls hard stop across both engines.
+- `AUTHORITY=OFF|ASSIST|AUTO` controls entry authority.
 - `STOCK_SYMBOLS=AAPL,NVDA,TSLA,SPY` starter equities universe.
 - Allocation controls:
   - `MAX_TOTAL_DAILY_LOSS_USD`
@@ -111,8 +113,8 @@ DRY_RUN=true AUTHORITY=ASSIST npm start
 ```
 
 Default feature flags:
-- `ENABLE_CRYPTO=true`
-- `ENABLE_EQUITIES=true`
+- `CRYPTO_AUTO_ENABLED=true`
+- `STOCK_PAPER_ENABLED=true`
 
 If Coinbase credentials are not set, the API server still starts and `/health` reports `status: "degraded"` with a credentials message.
 
@@ -144,7 +146,8 @@ DRY_RUN=false AUTHORITY=AUTO npm start
 | GET | `/signals` | Latest signal per pair |
 | GET | `/orders` | Open orders + recent fills |
 | GET | `/positions` | Open positions + daily P&L |
-| GET | `/unified/dashboard` | Unified status, split balances/positions, latest signals, fills, total portfolio PnL |
+| GET | `/unified/dashboard` | Operator control panel payload: control state, real crypto, simulated stocks, signals |
+| GET/POST | `/control` | Read or update `CRYPTO_AUTO_ENABLED`, `STOCK_PAPER_ENABLED`, `AUTHORITY`, `GLOBAL_KILL_SWITCH` |
 | GET/POST | `/kill-switch` | Read or toggle kill switch |
 | GET/POST | `/mode` | Read or set authority mode |
 | DELETE | `/orders` | Cancel all open orders |
@@ -163,6 +166,8 @@ DRY_RUN=false AUTHORITY=AUTO npm start
 8. **Daily loss cutoff** — halt at $150 daily loss
 9. **Position exists** — no double-entry on same pair
 10. **Exchange minimum** — reject below CB's min order size
+11. **Duplicate guard logs** — `POSITION_ADD_BLOCKED_DUPLICATE` / `POSITION_ADD_ALLOWED`
+12. **Allocator audit logs** — `CAPITAL_ALLOCATION_DECISION`
 
 All thresholds configurable in `.env`.
 
@@ -215,6 +220,11 @@ curl -X POST http://localhost:3000/kill-switch \
   -H 'Content-Type: application/json' \
   -d '{"active":false}'
 
+# Control panel update
+curl -X POST http://localhost:3000/control \
+  -H 'Content-Type: application/json' \
+  -d '{"cryptoAutoEnabled":true,"stockPaperEnabled":true,"authority":"ASSIST","globalKillSwitch":false}'
+
 # Cancel all open orders
 curl -X DELETE http://localhost:3000/orders | jq .
 
@@ -266,8 +276,8 @@ sudo journalctl -u rw-trader -f
 
 ## Safe Rollout Plan (No Coinbase Breakage)
 
-1. Deploy with `ENABLE_CRYPTO=true` and `ENABLE_EQUITIES=false` to confirm Coinbase behavior remains unchanged.
+1. Deploy with `CRYPTO_AUTO_ENABLED=true` and `STOCK_PAPER_ENABLED=false` to confirm Coinbase behavior remains unchanged.
 2. Validate health and existing endpoints (`/health`, `/balances`, `/positions`, `/signals`) under dry run.
-3. Enable equities with `ENABLE_EQUITIES=true` while keeping `DRY_RUN=true` and `AUTHORITY=ASSIST`.
+3. Enable stock simulation with `STOCK_PAPER_ENABLED=true` while keeping `DRY_RUN=true` and `AUTHORITY=ASSIST`.
 4. Verify unified dashboard panel data from `/unified/dashboard`.
 5. Move to `DRY_RUN=false` only after reviewing allocator limits and kill-switch behavior.

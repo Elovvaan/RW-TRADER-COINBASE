@@ -37,6 +37,17 @@ function parseBool(key, fallback) {
   throw new Error(`[CONFIG] ${key} must be "true" or "false", got: "${v}"`);
 }
 
+function parseBoolAliases(keys, fallback) {
+  for (const key of keys) {
+    const v = process.env[key];
+    if (v === undefined || v === '') continue;
+    if (v === 'true') return true;
+    if (v === 'false') return false;
+    throw new Error(`[CONFIG] ${key} must be "true" or "false", got: "${v}"`);
+  }
+  return fallback;
+}
+
 function parseCsv(key, fallback) {
   return optionalEnv(key, fallback)
     .split(',')
@@ -54,8 +65,10 @@ export const config = {
   authority: optionalEnv('AUTHORITY', 'ASSIST'), // OFF | ASSIST | AUTO
   scanIntervalMs: parseInt_('SCAN_INTERVAL_MS', 60000),
   signalConfidenceThreshold: parseFloat_('SIGNAL_CONFIDENCE_THRESHOLD', 0),
-  enableCrypto: parseBool('ENABLE_CRYPTO', true),
-  enableEquities: parseBool('ENABLE_EQUITIES', true),
+  cryptoAutoEnabled: parseBoolAliases(['CRYPTO_AUTO_ENABLED', 'ENABLE_CRYPTO'], true),
+  stockPaperEnabled: parseBoolAliases(['STOCK_PAPER_ENABLED', 'ENABLE_EQUITIES'], true),
+  enableCrypto: parseBoolAliases(['CRYPTO_AUTO_ENABLED', 'ENABLE_CRYPTO'], true),
+  enableEquities: parseBoolAliases(['STOCK_PAPER_ENABLED', 'ENABLE_EQUITIES'], true),
 
   // Trading universe
   tradingPairs: parseCsv('TRADING_PAIRS', 'BTC-USD,ETH-USD,SOL-USD'),
@@ -80,7 +93,8 @@ export const config = {
   logLevel: optionalEnv('LOG_LEVEL', 'info'),
 
   // Kill switch
-  killSwitch: parseBool('KILL_SWITCH', false),
+  globalKillSwitch: parseBoolAliases(['GLOBAL_KILL_SWITCH', 'KILL_SWITCH'], false),
+  killSwitch: parseBoolAliases(['GLOBAL_KILL_SWITCH', 'KILL_SWITCH'], false),
 
   // Coinbase API base
   cbRestBase: 'https://api.coinbase.com',
@@ -93,6 +107,11 @@ export const config = {
     maxEquitiesAllocation: parseFloat_('MAX_EQUITIES_ALLOCATION', 0.4),
     perPositionMaxRisk: parseFloat_('PER_POSITION_MAX_RISK', 0.02),
     targetNotionalPct: parseFloat_('TARGET_NOTIONAL_PCT', 0.1),
+  },
+
+  execution: {
+    cryptoAllowPyramiding: parseBool('CRYPTO_ALLOW_PYRAMIDING', false),
+    stockAllowPyramiding: parseBool('STOCK_ALLOW_PYRAMIDING', false),
   },
 
   // Stock broker adapter
@@ -124,8 +143,8 @@ if (config.signalConfidenceThreshold < 0 || config.signalConfidenceThreshold > 1
   throw new Error(`[CONFIG] SIGNAL_CONFIDENCE_THRESHOLD must be between 0 and 1. Got: "${config.signalConfidenceThreshold}"`);
 }
 
-if (!config.enableCrypto && !config.enableEquities) {
-  throw new Error('[CONFIG] At least one market must be enabled (ENABLE_CRYPTO or ENABLE_EQUITIES).');
+if (!config.cryptoAutoEnabled && !config.stockPaperEnabled) {
+  throw new Error('[CONFIG] At least one market must be enabled (CRYPTO_AUTO_ENABLED or STOCK_PAPER_ENABLED).');
 }
 
 if (config.allocator.maxCryptoAllocation < 0 || config.allocator.maxCryptoAllocation > 1) {
@@ -143,6 +162,16 @@ if (config.allocator.perPositionMaxRisk <= 0 || config.allocator.perPositionMaxR
 // Safety: AUTO only allowed when DRY_RUN is explicitly false
 if (config.authority === 'AUTO' && config.dryRun) {
   throw new Error('[CONFIG] AUTHORITY=AUTO requires DRY_RUN=false. Set DRY_RUN=false intentionally to enable live execution.');
+}
+
+if ((process.env.ENABLE_CRYPTO ?? '') !== '' && (process.env.CRYPTO_AUTO_ENABLED ?? '') === '') {
+  process.stderr.write('[CONFIG] ENABLE_CRYPTO is deprecated; use CRYPTO_AUTO_ENABLED.\n');
+}
+if ((process.env.ENABLE_EQUITIES ?? '') !== '' && (process.env.STOCK_PAPER_ENABLED ?? '') === '') {
+  process.stderr.write('[CONFIG] ENABLE_EQUITIES is deprecated; use STOCK_PAPER_ENABLED.\n');
+}
+if ((process.env.KILL_SWITCH ?? '') !== '' && (process.env.GLOBAL_KILL_SWITCH ?? '') === '') {
+  process.stderr.write('[CONFIG] KILL_SWITCH is deprecated; use GLOBAL_KILL_SWITCH.\n');
 }
 
 export default config;
