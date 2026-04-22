@@ -32,7 +32,7 @@ export class UnifiedExecutionRouter {
     };
   }
 
-  async route({ signal, snapshot, priceMap }) {
+  async route({ signal, snapshot, priceMap, executionContext = {} }) {
     if (signal.market === 'crypto' && !config.cryptoAutoEnabled) {
       log.info('CRYPTO_ENGINE_DISABLED', { market: signal.market, symbol: signal.symbol, reason: 'CRYPTO_AUTO_DISABLED' });
       return { executed: false, reason: 'CRYPTO_DISABLED' };
@@ -67,10 +67,18 @@ export class UnifiedExecutionRouter {
       ? config.execution.cryptoAllowPyramiding
       : config.execution.stockAllowPyramiding;
 
+    const smallAccountMode = Boolean(executionContext.smallAccountMode);
+    const overrideMaxOpenPositions = Number(executionContext.maxOpenPositions);
+    const effectiveMaxOpenPositions = Number.isFinite(overrideMaxOpenPositions) && overrideMaxOpenPositions > 0
+      ? Math.floor(overrideMaxOpenPositions)
+      : (signal.market === 'crypto' && smallAccountMode
+      ? Math.max(1, Math.min(config.smallAccount.maxOpenPositions, config.dayTrade.maxOpenPositions))
+      : config.dayTrade.maxOpenPositions);
+
     if (signal.market === 'crypto' && !hasExistingPosition) {
       const openCryptoPositions = portfolio.getAllPositions().length;
       const modeLimit = config.strategyMode === 'DAY_TRADE'
-        ? config.dayTrade.maxOpenPositions
+        ? effectiveMaxOpenPositions
         : config.tradingPairs.length;
       if (openCryptoPositions >= modeLimit) {
         log.info('MAX_POSITIONS_BLOCKED', {
@@ -83,11 +91,23 @@ export class UnifiedExecutionRouter {
       }
     }
 
-    if (hasExistingPosition && !pyramidingAllowed) {
+    const duplicateWindowMs = signal.market === 'crypto'
+      ? Number(config.smallAccount.duplicateWindowMs || 0)
+      : 0;
+    const hasRecentDuplicate = signal.market === 'crypto'
+      ? portfolio.hasRecentEntry(signal.symbol, duplicateWindowMs)
+      : false;
+
+    if ((hasExistingPosition || hasRecentDuplicate) && !pyramidingAllowed) {
       log.info('DUPLICATE_ENTRY_BLOCKED', {
         market: signal.market,
         symbol: signal.symbol,
         pyramidingAllowed,
+        hasExistingPosition,
+        hasRecentDuplicate,
+        remainingMs: signal.market === 'crypto'
+          ? portfolio.recentEntryRemaining(signal.symbol, duplicateWindowMs)
+          : 0,
       });
       return { executed: false, reason: 'DUPLICATE_ENTRY_BLOCKED' };
     }
@@ -122,6 +142,7 @@ export class UnifiedExecutionRouter {
       dailyLossUsd: portfolio.getDailyLoss() + stockAdapter.getDailyLossUsd(),
       adapter,
       proposedNotionalUsd,
+      executionContext,
     });
 
     if (!allocation.approved) {
@@ -129,7 +150,7 @@ export class UnifiedExecutionRouter {
     }
 
     if (signal.market === 'crypto') {
-      return adapter.executeSignal({ signal, snapshot, priceMap });
+      return adapter.executeSignal({ signal, snapshot, priceMap, allocation, executionContext });
     }
 
     if (config.authority === 'ASSIST') {

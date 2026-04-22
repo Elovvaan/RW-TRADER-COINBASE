@@ -15,6 +15,7 @@ class PortfolioState {
     this.realizedPnlUsd = 0;
     this.dailyLossResetAt = _todayMidnight();
     this.stopCooldowns = new Map(); // productId → timestamp of last stop-out
+    this.lastEntryAt = new Map();   // productId → timestamp of last entry
   }
 
   // ── Positions ─────────────────────────────────────────────────────────────
@@ -33,6 +34,7 @@ class PortfolioState {
       lastPnlUpdateTs: openedAt,
     };
     this.positions.set(pos.productId, position);
+    this.lastEntryAt.set(pos.productId, openedAt);
     log.info('POSITION_OPENED', {
       productId: position.productId,
       side: position.side,
@@ -129,6 +131,22 @@ class PortfolioState {
 
   hasPosition(productId) {
     return this.positions.has(productId);
+  }
+
+  hasRecentEntry(productId, windowMs) {
+    const ts = this.lastEntryAt.get(productId);
+    if (!ts) return false;
+    const durationMs = Number.isFinite(Number(windowMs)) ? Number(windowMs) : 0;
+    if (durationMs <= 0) return false;
+    return Date.now() - ts < durationMs;
+  }
+
+  recentEntryRemaining(productId, windowMs) {
+    const ts = this.lastEntryAt.get(productId);
+    if (!ts) return 0;
+    const durationMs = Number.isFinite(Number(windowMs)) ? Number(windowMs) : 0;
+    if (durationMs <= 0) return 0;
+    return Math.max(0, durationMs - (Date.now() - ts));
   }
 
   // ── Daily loss tracking ───────────────────────────────────────────────────

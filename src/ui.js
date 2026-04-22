@@ -382,9 +382,9 @@ export function getDashboardHTML() {
         <div class="panel" style="margin-top:10px;">
           <p class="section-title">Top Crypto Decision Transparency</p>
           <div class="grid three-col">
-            <div class="kv"><span class="k">BTC-USD</span><span id="skip-btc">WAIT</span></div>
-            <div class="kv"><span class="k">ETH-USD</span><span id="skip-eth">WAIT</span></div>
-            <div class="kv"><span class="k">SOL-USD</span><span id="skip-sol">WAIT</span></div>
+            <div class="kv"><span class="k">BTC-USD</span><span id="skip-btc">NO_DATA</span></div>
+            <div class="kv"><span class="k">ETH-USD</span><span id="skip-eth">NO_DATA</span></div>
+            <div class="kv"><span class="k">SOL-USD</span><span id="skip-sol">NO_DATA</span></div>
           </div>
         </div>
       </div>
@@ -697,7 +697,7 @@ export function getDashboardHTML() {
   }
   function decisionLabel(decision) {
     const raw = decision && (decision.skipReason || decision.status);
-    return raw ? String(raw).replaceAll('_', ' ') : 'WAIT';
+    return raw ? String(raw).replaceAll('_', ' ') : 'NO_DATA';
   }
   function signalOrSkipBadge(symbol, side) {
     const normalizedSide = String(side || 'WAIT').toUpperCase();

@@ -18,11 +18,12 @@ import portfolio from '../portfolio/index.js';
  * @param {object} snapshot  Current price snapshot
  * @param {object} priceMap  { 'BTC-USD': price, ... } for portfolio valuation
  */
-export async function evaluateAndExecute(signal, snapshot, priceMap) {
+export async function evaluateAndExecute(signal, snapshot, priceMap, options = {}) {
   if (signal.action !== 'BUY') return { executed: false, reason: signal.reason };
 
   const { productId, entryPrice, tpPrice, slPrice } = signal;
   const cooldownAfterStopMs = Number(signal?.indicators?.cooldownAfterStopMs);
+  const quoteSizeOverride = Number(options?.quoteSizeOverride);
 
   // ── 1. Portfolio value for sizing ─────────────────────────────────────────
   let balances, portfolioUSD;
@@ -34,7 +35,15 @@ export async function evaluateAndExecute(signal, snapshot, priceMap) {
     return { executed: false, reason: 'PORTFOLIO_FETCH_ERROR' };
   }
 
-  const quoteSize = calculatePositionSize(portfolioUSD);
+  const availableUsd = Number(balances?.USD?.available || 0);
+  const maxQuoteByCash = availableUsd * Math.max(0.01, Math.min(0.99, Number(config.smallAccount.maxSingleTradeCashPct || 0.95)));
+  const baseQuoteSize = Number.isFinite(quoteSizeOverride) && quoteSizeOverride > 0
+    ? quoteSizeOverride
+    : calculatePositionSize(portfolioUSD);
+  let quoteSize = Math.min(baseQuoteSize, availableUsd, maxQuoteByCash);
+  if (!Number.isFinite(quoteSize) || quoteSize <= 0) {
+    return { executed: false, reason: 'NO_ALLOCATABLE_CAPITAL' };
+  }
 
   // ── 2. Risk checks ────────────────────────────────────────────────────────
   const risk = runRiskChecks({
@@ -57,6 +66,12 @@ export async function evaluateAndExecute(signal, snapshot, priceMap) {
     return { executed: false, reason: 'PRODUCT_FETCH_ERROR' };
   }
 
+  const minQuote = Number(product?.quote_min_size || 0);
+  if (Number.isFinite(minQuote) && minQuote > 0 && quoteSize < minQuote) {
+    if (availableUsd >= minQuote && maxQuoteByCash >= minQuote) {
+      quoteSize = minQuote;
+    }
+  }
   const minCheck = validateMinimumOrder(product, null, quoteSize);
   if (!minCheck.valid) {
     log.orderRejected({ productId, reason: `BELOW_MINIMUM: ${minCheck.reason}` });

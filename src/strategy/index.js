@@ -194,11 +194,19 @@ async function generateDayTradeSignal(productId, currentPrice, timeframe) {
 
     const regime = regimeFast > regimeSlow ? 'BULL' : 'BEAR';
     const momentumBull = ema9 > ema21 && ema21 >= ema34;
+    const latest = closes[closes.length - 1];
+    const prior = closes[Math.max(0, closes.length - 4)];
+    const microTrendPct = Number.isFinite(latest) && Number.isFinite(prior) && prior > 0
+      ? (latest - prior) / prior
+      : 0;
+    const microTrendDetected = (ema9 >= ema21) || microTrendPct > 0.0008;
+    const shortTermMomentum = momentumBull || (Number.isFinite(latest) && Number.isFinite(closes[closes.length - 2]) && latest > closes[closes.length - 2]);
     const pullbackRsi = Number.isFinite(intradayRsi)
       && intradayRsi >= config.dayTrade.rsiMin
       && intradayRsi <= config.dayTrade.rsiMax;
     const nearTrend = Number.isFinite(ema21)
       && Math.abs(currentPrice - ema21) / ema21 < config.dayTrade.trendProximityPct;
+    const confidence = _dayTradeConfidence({ intradayRsi, ema9, ema21, ema34, regimeFast, regimeSlow });
     const indicators = {
       strategyMode: 'DAY_TRADE',
       timeframe: validatedTimeframe,
@@ -211,25 +219,40 @@ async function generateDayTradeSignal(productId, currentPrice, timeframe) {
       intradayRsi,
       intradayAtr,
       currentPrice,
+      confidence,
+      momentumBull,
+      shortTermMomentum,
+      microTrendDetected,
+      microTrendPct,
       cooldownAfterStopMs: config.dayTrade.cooldownAfterStopMs,
     };
 
-    if (regime !== 'BULL') {
+    const primaryEntry = regime === 'BULL'
+      && momentumBull
+      && pullbackRsi
+      && nearTrend
+      && confidence >= config.dayTrade.minConfidence;
+    const fallbackEntry = confidence >= config.dayTrade.fallbackMinConfidence
+      && (shortTermMomentum || microTrendDetected);
+    if (!primaryEntry && regime !== 'BULL' && !fallbackEntry) {
       return _waitSignal(productId, 'REGIME_BLOCKED', currentPrice, indicators);
     }
-    if (!momentumBull || !pullbackRsi || !nearTrend) {
+    if (!primaryEntry && !fallbackEntry) {
       return _waitSignal(productId, 'NO_SETUP', currentPrice, indicators);
     }
 
     const signal = {
       productId,
       action: 'BUY',
-      confidence: _dayTradeConfidence({ intradayRsi, ema9, ema21, ema34, regimeFast, regimeSlow }),
-      reason: 'DAY_TRADE_PULLBACK',
+      confidence,
+      reason: primaryEntry ? 'DAY_TRADE_PULLBACK' : 'DAY_TRADE_MOMENTUM_FALLBACK',
       entryPrice: currentPrice,
       tpPrice: currentPrice * (1 + config.dayTrade.takeProfitPct),
       slPrice: currentPrice * (1 - config.dayTrade.stopLossPct),
-      indicators,
+      indicators: {
+        ...indicators,
+        entryMode: primaryEntry ? 'PRIMARY' : 'FALLBACK',
+      },
       ts: Date.now(),
     };
     log.signalGenerated(signal);
