@@ -493,17 +493,17 @@ export function getDashboardHTML() {
           <div class="panel">
             <p class="section-title">Runtime Controls</p>
             <div class="control-grid">
-              <button class="btn-safe" onclick="setControl({ cryptoAutoEnabled: true })">Crypto Live ON</button>
-              <button class="btn-danger" onclick="setControl({ cryptoAutoEnabled: false })">Crypto Live OFF</button>
-              <button class="btn-safe" onclick="setControl({ stockPaperEnabled: true })">Stocks Paper ON</button>
-              <button class="btn-danger" onclick="setControl({ stockPaperEnabled: false })">Stocks Paper OFF</button>
-              <select id="authority-select" class="full" onchange="setControl({ authority: this.value })">
+              <button class="btn-safe" id="control-crypto-on">Crypto Live ON</button>
+              <button class="btn-danger" id="control-crypto-off">Crypto Live OFF</button>
+              <button class="btn-safe" id="control-stocks-on">Stocks Paper ON</button>
+              <button class="btn-danger" id="control-stocks-off">Stocks Paper OFF</button>
+              <select id="authority-select" class="full">
                 <option value="OFF">Authority OFF</option>
                 <option value="ASSIST">Authority ASSIST</option>
                 <option value="AUTO">Authority AUTO</option>
               </select>
-              <button class="btn-safe" onclick="setControl({ globalKillSwitch: false })">Kill CLEAR</button>
-              <button class="btn-danger" onclick="setControl({ globalKillSwitch: true })">Kill ARM</button>
+              <button class="btn-safe" id="control-kill-clear">Kill CLEAR</button>
+              <button class="btn-danger" id="control-kill-arm">Kill ARM</button>
             </div>
           </div>
 
@@ -548,7 +548,8 @@ export function getDashboardHTML() {
   const FAVORITES = ['BTC-USD','ETH-USD','SOL-USD','AAPL','TSLA'];
   const ALL_SYMBOLS = TOP_CRYPTO.concat(TOP_STOCKS.filter(function(s) { return !TOP_CRYPTO.includes(s); }));
   const CRYPTO_SET = new Set(TOP_CRYPTO);
-  const EMPTY = '—';
+  const EMPTY_VALUE = '—';
+  const DEFAULT_REFRESH_INTERVAL_MS = 5000;
   const MAX_LOG_ENTRIES = 70;
   const MAX_CANDLE_HISTORY = 1200;
   const MAX_DISPLAY_CANDLES = 120;
@@ -574,7 +575,7 @@ export function getDashboardHTML() {
     selectedSymbol: 'BTC-USD',
     timeframe: '1m',
     indicatorsOn: true,
-    refreshIntervalMs: 5000,
+    refreshIntervalMs: DEFAULT_REFRESH_INTERVAL_MS,
     refreshTimerId: null,
     dashboard: null,
     orders: [],
@@ -591,18 +592,18 @@ export function getDashboardHTML() {
 
   function fmt(v, dec) {
     const n = Number(v);
-    if (!Number.isFinite(n)) return EMPTY;
+    if (!Number.isFinite(n)) return EMPTY_VALUE;
     const d = Number.isFinite(dec) ? dec : 2;
     return n.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
   }
   function usd(v, dec) {
     const n = Number(v);
-    if (!Number.isFinite(n)) return EMPTY;
-    return '$' + fmt(n, Number.isFinite(dec) ? dec : 2);
+    if (!Number.isFinite(n)) return EMPTY_VALUE;
+    return '$' + fmt(n, dec);
   }
-  function pct(v) {
+  function formatPercent(v) {
     const n = Number(v);
-    if (!Number.isFinite(n)) return EMPTY;
+    if (!Number.isFinite(n)) return EMPTY_VALUE;
     return (n >= 0 ? '+' : '') + fmt(n, 2) + '%';
   }
   function clsSigned(v) {
@@ -621,9 +622,9 @@ export function getDashboardHTML() {
       : '<span class="badge badge-paper">PAPER</span>';
   }
   function age(ts) {
-    if (!ts) return EMPTY;
+    if (!ts) return EMPTY_VALUE;
     const ms = Date.now() - new Date(ts).getTime();
-    if (!Number.isFinite(ms) || ms < 0) return EMPTY;
+    if (!Number.isFinite(ms) || ms < 0) return EMPTY_VALUE;
     if (ms < 60000) return Math.floor(ms / 1000) + 's';
     if (ms < 3600000) return Math.floor(ms / 60000) + 'm';
     return Math.floor(ms / 3600000) + 'h';
@@ -653,19 +654,20 @@ export function getDashboardHTML() {
   }
 
   function normalizePosition(raw) {
-    const symbol = raw.symbol || raw.productId || raw.asset || EMPTY;
+    const symbol = raw.symbol || raw.productId || raw.asset || EMPTY_VALUE;
     const sizeNum = Number(raw.size || raw.qty || raw.quantity || 0);
     const entry = Number(raw.entry || raw.entryPrice || raw.avgEntryPrice);
     const mark = Number(raw.currentPrice || raw.markPrice || raw.lastPrice);
     const pnl = Number(raw.unrealizedPnL || raw.unrealizedPnlUsd || raw.pnl || 0);
-    const side = sizeNum >= 0 ? 'LONG' : 'SHORT';
+    const rawSide = String(raw.side || '').toUpperCase();
+    const side = rawSide === 'BUY' ? 'LONG' : (rawSide === 'SELL' ? 'SHORT' : (rawSide || (sizeNum >= 0 ? 'LONG' : 'SHORT')));
     return {
       symbol: symbol,
       market: CRYPTO_SET.has(symbol) ? 'crypto' : (raw.market || 'equities'),
       entry: Number.isFinite(entry) ? entry : null,
       currentPrice: Number.isFinite(mark) ? mark : null,
       unrealizedPnL: Number.isFinite(pnl) ? pnl : 0,
-      side: raw.side || side,
+      side: side,
       size: sizeNum,
       tp: Number.isFinite(Number(raw.tp || raw.tpPrice)) ? Number(raw.tp || raw.tpPrice) : null,
       sl: Number.isFinite(Number(raw.sl || raw.slPrice)) ? Number(raw.sl || raw.slPrice) : null,
@@ -695,13 +697,17 @@ export function getDashboardHTML() {
     for (let i = 0; i < src.length; i += step) {
       const slice = src.slice(i, i + step);
       if (!slice.length) continue;
+      const validSlice = slice.filter(function(c) {
+        return Number.isFinite(c.o) && Number.isFinite(c.h) && Number.isFinite(c.l) && Number.isFinite(c.c);
+      });
+      if (!validSlice.length) continue;
       let high = -Infinity;
       let low = Infinity;
-      slice.forEach(function(c) {
+      validSlice.forEach(function(c) {
         high = Math.max(high, c.h);
         low = Math.min(low, c.l);
       });
-      out.push({ t: slice[0].t, o: slice[0].o, h: high, l: low, c: slice[slice.length - 1].c });
+      out.push({ t: validSlice[0].t, o: validSlice[0].o, h: high, l: low, c: validSlice[validSlice.length - 1].c });
     }
     return out.slice(-MAX_DISPLAY_CANDLES);
   }
@@ -749,8 +755,11 @@ export function getDashboardHTML() {
   }
 
   function reconcileSignals(signals) {
+    function signalKey(s) {
+      return [s.market, s.symbol, s.side, s.ts].join('|');
+    }
     const existing = new Map(state.signalHistory.map(function(s) {
-      return [[s.market, s.symbol, s.side, s.ts].join('|'), s];
+      return [signalKey(s), s];
     }));
     (signals || []).forEach(function(s) {
       const clean = {
@@ -761,10 +770,10 @@ export function getDashboardHTML() {
         entry: Number(s.entry),
         tp: Number(s.tp),
         sl: Number(s.sl),
-        reason: s.reason || EMPTY,
+        reason: s.reason || EMPTY_VALUE,
         ts: s.ts || Date.now(),
       };
-      const key = [clean.market, clean.symbol, clean.side, clean.ts].join('|');
+      const key = signalKey(clean);
       if (!existing.has(key)) state.signalHistory.unshift(clean);
     });
     state.signalHistory = state.signalHistory.slice(0, 240);
@@ -847,8 +856,8 @@ export function getDashboardHTML() {
 
     const signalRows = state.signalHistory.slice(0, 8).map(function(s) {
       return '<tr>' +
-        '<td>' + (s.market || EMPTY) + '</td>' +
-        '<td>' + (s.symbol || EMPTY) + '</td>' +
+        '<td>' + (s.market || EMPTY_VALUE) + '</td>' +
+        '<td>' + (s.symbol || EMPTY_VALUE) + '</td>' +
         '<td>' + sideBadge(s.side || 'WAIT') + '</td>' +
         '<td class="num">' + Math.round(Number(s.confidence || 0) * 100) + '%</td>' +
         '<td>' + age(s.ts) + '</td>' +
@@ -859,8 +868,8 @@ export function getDashboardHTML() {
     const fillRows = state.fills.slice(0, 8).map(function(f) {
       return '<tr>' +
         '<td>' + typeBadge(f.symbol || 'BTC-USD') + '</td>' +
-        '<td>' + (f.symbol || EMPTY) + '</td>' +
-        '<td>' + (f.side || EMPTY) + '</td>' +
+        '<td>' + (f.symbol || EMPTY_VALUE) + '</td>' +
+        '<td>' + (f.side || EMPTY_VALUE) + '</td>' +
         '<td class="num">' + usd(f.price) + '</td>' +
         '<td class="num">' + fmt(f.size, 6) + '</td>' +
         '<td>' + age(f.filledAt || f.ts) + '</td>' +
@@ -874,8 +883,8 @@ export function getDashboardHTML() {
       const w = state.watch.get(symbol) || { price: null, movePct: 0, signal: 'WAIT' };
       return '<tr class="clickable ' + (state.selectedSymbol === symbol ? 'active-row' : '') + '" data-symbol="' + symbol + '">' +
         '<td><div style="display:flex;gap:6px;align-items:center;">' + typeBadge(symbol) + '<b>' + symbol + '</b></div></td>' +
-        '<td class="num">' + (Number.isFinite(w.price) ? usd(w.price) : EMPTY) + '</td>' +
-        '<td class="num ' + clsSigned(w.movePct) + '">' + pct(w.movePct) + '</td>' +
+        '<td class="num">' + (Number.isFinite(w.price) ? usd(w.price) : EMPTY_VALUE) + '</td>' +
+        '<td class="num ' + clsSigned(w.movePct) + '">' + formatPercent(w.movePct) + '</td>' +
         '<td>' + sideBadge(w.signal) + '</td>' +
       '</tr>';
     }).join('');
@@ -896,8 +905,8 @@ export function getDashboardHTML() {
       const w = state.watch.get(symbol) || { price: null, movePct: 0, signal: 'WAIT' };
       return '<button class="symbol-chip ' + (state.selectedSymbol === symbol ? 'active' : '') + '" data-symbol="' + symbol + '">' +
         '<div class="top"><b>' + symbol + '</b>' + typeBadge(symbol) + '</div>' +
-        '<div class="price">' + (Number.isFinite(w.price) ? usd(w.price) : EMPTY) + '</div>' +
-        '<div class="' + clsSigned(w.movePct) + '">' + pct(w.movePct) + ' · ' + String(w.signal || 'WAIT').toUpperCase() + '</div>' +
+        '<div class="price">' + (Number.isFinite(w.price) ? usd(w.price) : EMPTY_VALUE) + '</div>' +
+        '<div class="' + clsSigned(w.movePct) + '">' + formatPercent(w.movePct) + ' · ' + String(w.signal || 'WAIT').toUpperCase() + '</div>' +
       '</button>';
     }).join('');
 
@@ -916,7 +925,7 @@ export function getDashboardHTML() {
     const pos = symbolPosition(state.selectedSymbol);
     const price = getSymbolPrice(state.selectedSymbol);
     document.getElementById('market-active-symbol').textContent = state.selectedSymbol;
-    document.getElementById('market-active-price').textContent = Number.isFinite(price) ? usd(price) : EMPTY;
+    document.getElementById('market-active-price').textContent = Number.isFinite(price) ? usd(price) : EMPTY_VALUE;
     document.getElementById('market-active-signal').innerHTML = sideBadge(sig ? sig.side : 'WAIT');
     document.getElementById('market-active-pos').textContent = pos ? ('OPEN · ' + pos.side + ' · ' + usd(pos.unrealizedPnL || 0)) : 'Flat';
   }
@@ -938,7 +947,7 @@ export function getDashboardHTML() {
     signalBadge.textContent = side;
 
     const livePrice = getSymbolPrice(symbol);
-    document.getElementById('chart-live-line').textContent = 'Live: ' + (Number.isFinite(livePrice) ? usd(livePrice) : EMPTY);
+    document.getElementById('chart-live-line').textContent = 'Live: ' + (Number.isFinite(livePrice) ? usd(livePrice) : EMPTY_VALUE);
 
     const conf = Math.max(0, Math.min(1, Number(sig && sig.confidence || 0)));
     document.getElementById('confidence-fill').style.width = Math.round(conf * 100) + '%';
@@ -948,9 +957,9 @@ export function getDashboardHTML() {
     document.getElementById('chart-detail-signal').innerHTML = sideBadge(side);
     document.getElementById('chart-detail-confidence').textContent = Math.round(conf * 100) + '%';
     document.getElementById('chart-detail-risk').textContent =
-      (Number.isFinite(Number(sig && sig.entry)) ? usd(sig.entry) : EMPTY) + ' / ' +
-      (Number.isFinite(Number(sig && sig.tp)) ? usd(sig.tp) : EMPTY) + ' / ' +
-      (Number.isFinite(Number(sig && sig.sl)) ? usd(sig.sl) : EMPTY);
+      (Number.isFinite(Number(sig && sig.entry)) ? usd(sig.entry) : EMPTY_VALUE) + ' / ' +
+      (Number.isFinite(Number(sig && sig.tp)) ? usd(sig.tp) : EMPTY_VALUE) + ' / ' +
+      (Number.isFinite(Number(sig && sig.sl)) ? usd(sig.sl) : EMPTY_VALUE);
     document.getElementById('chart-detail-position').textContent = pos
       ? ('OPEN ' + pos.side + ' · ' + usd(pos.unrealizedPnL || 0))
       : 'Flat';
@@ -963,23 +972,23 @@ export function getDashboardHTML() {
       return;
     }
 
-    let minP = Infinity;
-    let maxP = -Infinity;
+    let minPrice = Infinity;
+    let maxPrice = -Infinity;
     candles.forEach(function(c) {
-      minP = Math.min(minP, c.l);
-      maxP = Math.max(maxP, c.h);
+      minPrice = Math.min(minPrice, c.l);
+      maxPrice = Math.max(maxPrice, c.h);
     });
 
     [sig && sig.entry, sig && sig.tp, sig && sig.sl, pos && pos.entry, pos && pos.currentPrice].forEach(function(v) {
       if (Number.isFinite(Number(v))) {
-        minP = Math.min(minP, Number(v));
-        maxP = Math.max(maxP, Number(v));
+        minPrice = Math.min(minPrice, Number(v));
+        maxPrice = Math.max(maxPrice, Number(v));
       }
     });
 
-    const pad = (maxP - minP || 1) * 0.14;
-    minP -= pad;
-    maxP += pad;
+    const pad = (maxPrice - minPrice || 1) * 0.14;
+    minPrice -= pad;
+    maxPrice += pad;
 
     const W = CHART_WIDTH;
     const H = CHART_HEIGHT;
@@ -988,12 +997,12 @@ export function getDashboardHTML() {
     const candleWidth = (W - px * 2) / candles.length;
 
     function x(i) { return px + i * candleWidth + candleWidth / 2; }
-    function y(p) { return py + ((maxP - p) / (maxP - minP || 1)) * (H - py * 2); }
+    function y(p) { return py + ((maxPrice - p) / (maxPrice - minPrice || 1)) * (H - py * 2); }
 
     const lines = [];
     for (let i = 0; i <= 5; i += 1) {
       const yy = py + ((H - py * 2) / 5) * i;
-      const p = maxP - ((maxP - minP) / 5) * i;
+      const p = maxPrice - ((maxPrice - minPrice) / 5) * i;
       lines.push('<line x1="' + px + '" y1="' + yy + '" x2="' + (W - px) + '" y2="' + yy + '" stroke="' + CHART_COLORS.grid + '" stroke-width="1"/>');
       lines.push('<text x="8" y="' + (yy + 4) + '" fill="' + CHART_COLORS.label + '" font-size="12">' + fmt(p, 2) + '</text>');
     }
@@ -1106,8 +1115,6 @@ export function getDashboardHTML() {
       state.pendingControls = false;
     }
   }
-  window.setControl = setControl;
-
   function scheduleRefresh() {
     if (state.refreshTimerId) clearInterval(state.refreshTimerId);
     state.refreshTimerId = setInterval(load, state.refreshIntervalMs);
@@ -1156,10 +1163,32 @@ export function getDashboardHTML() {
     });
 
     document.getElementById('refresh-interval').addEventListener('change', function(e) {
-      state.refreshIntervalMs = Number(e.target.value) || 5000;
+      state.refreshIntervalMs = Number(e.target.value) || DEFAULT_REFRESH_INTERVAL_MS;
       scheduleRefresh();
       renderControlTab();
       logLine('Refresh interval set to ' + Math.round(state.refreshIntervalMs / 1000) + 's');
+    });
+
+    document.getElementById('control-crypto-on').addEventListener('click', function() {
+      setControl({ cryptoAutoEnabled: true });
+    });
+    document.getElementById('control-crypto-off').addEventListener('click', function() {
+      setControl({ cryptoAutoEnabled: false });
+    });
+    document.getElementById('control-stocks-on').addEventListener('click', function() {
+      setControl({ stockPaperEnabled: true });
+    });
+    document.getElementById('control-stocks-off').addEventListener('click', function() {
+      setControl({ stockPaperEnabled: false });
+    });
+    document.getElementById('authority-select').addEventListener('change', function(e) {
+      setControl({ authority: e.target.value });
+    });
+    document.getElementById('control-kill-clear').addEventListener('click', function() {
+      setControl({ globalKillSwitch: false });
+    });
+    document.getElementById('control-kill-arm').addEventListener('click', function() {
+      setControl({ globalKillSwitch: true });
     });
 
     document.getElementById('control-timeframe-select').addEventListener('change', function(e) {
@@ -1190,7 +1219,7 @@ export function getDashboardHTML() {
           if (!r.ok) throw new Error('HTTP ' + r.status);
           return r.json();
         }).catch(function(err) {
-          logLine('Orders endpoint failed (' + String(err || 'unknown') + '); open-order list omitted.');
+          logLine('Orders endpoint failed (' + String(err || 'unknown') + '); showing empty open-orders list.');
           return { open: [] };
         }),
       ]);
