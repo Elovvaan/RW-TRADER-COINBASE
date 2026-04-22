@@ -103,7 +103,48 @@ const routes = {
 
   'GET /positions': async (_req, res) => {
     const state = portfolio.snapshot();
-    json(res, 200, state);
+    const now = Date.now();
+    const latestSignals = _agent ? _agent.getSignals() : [];
+    const signalTsByProduct = new Map(
+      latestSignals.map(s => [s.productId, s.ts]).filter(([pid]) => Boolean(pid))
+    );
+
+    const positions = (state.positions || []).map((p) => {
+      const snap = _agent?.feed?.getSnapshot?.(p.productId) ?? null;
+      const markPrice = Number.isFinite(p.markPrice) ? p.markPrice : (Number.isFinite(snap?.price) ? snap.price : null);
+      const lastPrice = Number.isFinite(p.lastPrice) ? p.lastPrice : (Number.isFinite(snap?.price) ? snap.price : null);
+      const marketTs = Number.isFinite(p.lastMarketUpdateTs) ? p.lastMarketUpdateTs : (Number.isFinite(snap?.ts) ? snap.ts : null);
+      const unrealizedPnlUsd = Number.isFinite(p.unrealizedPnlUsd)
+        ? p.unrealizedPnlUsd
+        : ((Number.isFinite(markPrice) && Number.isFinite(p.entryPrice) && Number.isFinite(p.baseSize))
+            ? ((markPrice - p.entryPrice) * p.baseSize)
+            : null);
+
+      return {
+        ...p,
+        markPrice,
+        lastPrice,
+        unrealizedPnlUsd,
+        signalTs: signalTsByProduct.get(p.productId) ?? null,
+        marketTs,
+        positionAgeMs: Number.isFinite(p.openedAt) ? Math.max(0, now - p.openedAt) : null,
+        lastMarketUpdateAgeMs: Number.isFinite(marketTs) ? Math.max(0, now - marketTs) : null,
+      };
+    });
+
+    log.info('UI_REFRESH_TICK', {
+      endpoint: '/positions',
+      openPositions: positions.length,
+      wsConnected: _agent?.feed?.connected ?? false,
+      refreshedAt: new Date(now).toISOString(),
+    });
+
+    json(res, 200, {
+      ...state,
+      positions,
+      wsConnected: _agent?.feed?.connected ?? false,
+      ts: new Date(now).toISOString(),
+    });
   },
 
   'GET /kill-switch': async (_req, res) => {

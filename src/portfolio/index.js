@@ -19,8 +19,27 @@ class PortfolioState {
   // ── Positions ─────────────────────────────────────────────────────────────
 
   openPosition(pos) {
-    this.positions.set(pos.productId, { ...pos, status: 'open', openedAt: Date.now() });
-    log.info('POSITION_OPENED', { pos });
+    const openedAt = Date.now();
+    const position = {
+      ...pos,
+      status: 'open',
+      openedAt,
+      markPrice: pos.entryPrice,
+      lastPrice: pos.entryPrice,
+      unrealizedPnlUsd: 0,
+      lastMarketUpdateTs: openedAt,
+      lastPnlUpdateTs: openedAt,
+    };
+    this.positions.set(pos.productId, position);
+    log.info('POSITION_OPENED', {
+      productId: position.productId,
+      side: position.side,
+      entryPrice: position.entryPrice,
+      baseSize: position.baseSize,
+      tpPrice: position.tpPrice,
+      slPrice: position.slPrice,
+      openedAt: position.openedAt,
+    });
   }
 
   closePosition(productId, exitPrice, reason) {
@@ -53,6 +72,47 @@ class PortfolioState {
     const newTrailing = currentPrice * (1 - config.risk.trailingStopPct);
     if (!pos.trailingStopPrice || newTrailing > pos.trailingStopPrice) {
       pos.trailingStopPrice = newTrailing;
+    }
+  }
+
+  applyMarketSnapshot(snapshot) {
+    if (!snapshot?.productId) return;
+
+    const pos = this.positions.get(snapshot.productId);
+    if (!pos) return;
+
+    const markPrice = Number(snapshot.price);
+    if (!Number.isFinite(markPrice) || markPrice <= 0) return;
+
+    const prevMarkPrice = pos.markPrice;
+    const prevPnl = pos.unrealizedPnlUsd;
+    const marketTs = Number.isFinite(snapshot.ts) ? snapshot.ts : Date.now();
+
+    pos.markPrice = markPrice;
+    pos.lastPrice = markPrice;
+    pos.lastMarketUpdateTs = marketTs;
+
+    const pnl = (markPrice - pos.entryPrice) * pos.baseSize;
+    pos.unrealizedPnlUsd = pnl;
+    pos.lastPnlUpdateTs = Date.now();
+
+    if (prevMarkPrice !== markPrice) {
+      log.info('POSITION_MARK_UPDATED', {
+        productId: pos.productId,
+        previousMarkPrice: prevMarkPrice,
+        markPrice,
+        marketTs,
+      });
+    }
+
+    if (prevPnl !== pnl) {
+      log.info('POSITION_PNL_UPDATED', {
+        productId: pos.productId,
+        previousUnrealizedPnlUsd: prevPnl,
+        unrealizedPnlUsd: pnl,
+        markPrice,
+        marketTs,
+      });
     }
   }
 

@@ -14,6 +14,7 @@ const EXIT_CHECK_INTERVAL_MS = 60 * 1000;         // Check exits every 60s
 export class TradingAgent {
   constructor() {
     this.feed     = new MarketFeed(config.tradingPairs);
+    this._onTicker = (snapshot) => portfolio.applyMarketSnapshot(snapshot);
     this.signals  = {};       // productId → latest signal
     this.running  = false;
     this._signalTimer = null;
@@ -36,6 +37,9 @@ export class TradingAgent {
       scanIntervalMs: config.scanIntervalMs,
       signalConfidenceThreshold: config.signalConfidenceThreshold,
     });
+
+    // Keep position telemetry synced to incoming market ticks
+    this.feed.on('ticker', this._onTicker);
 
     // Start WebSocket feed
     await this.feed.start();
@@ -62,6 +66,7 @@ export class TradingAgent {
     this.running = false;
     clearInterval(this._signalTimer);
     clearInterval(this._exitTimer);
+    this.feed.off('ticker', this._onTicker);
     this.feed.stop();
     log.info('AGENT_STOPPED', {});
   }
