@@ -285,8 +285,8 @@ export function getDashboardHTML() {
     </div>
     <div style="margin-top:14px">
       <table>
-        <thead><tr><th>Pair</th><th>Entry</th><th>TP</th><th>SL</th></tr></thead>
-        <tbody id="positions-body"><tr><td colspan="4" class="empty">No open positions.</td></tr></tbody>
+        <thead><tr><th>Pair</th><th>Entry</th><th>Mark/Last</th><th>Unrealized PnL</th><th>TP</th><th>SL</th><th>Signal Age</th><th>Position Age</th><th>Mkt Update Age</th></tr></thead>
+        <tbody id="positions-body"><tr><td colspan="9" class="empty">No open positions.</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -366,10 +366,18 @@ function fmt(n, dec=2) {
 }
 
 function ago(ts) {
+  if (typeof ts !== 'number' || !Number.isFinite(ts)) return '—';
   const s = Math.floor((Date.now() - ts) / 1000);
   if (s < 60) return s + 's ago';
   if (s < 3600) return Math.floor(s/60) + 'm ago';
   return Math.floor(s/3600) + 'h ago';
+}
+
+function ageSpan(ts) {
+  const safeTs = (typeof ts === 'number' && Number.isFinite(ts)) ? ts : null;
+  if (!safeTs) return '<span style="color:var(--muted)">—</span>';
+  const attrTs = Math.trunc(safeTs);
+  return \`<span data-age-ts="\${attrTs}" style="color:var(--muted)">\${ago(attrTs)}</span>\`;
 }
 
 // ── Health ──
@@ -415,15 +423,25 @@ async function loadPositions() {
   document.getElementById('m-positions').textContent  = d.positions?.length ?? 0;
 
   const tbody = document.getElementById('positions-body');
-  if (!d.positions?.length) { tbody.innerHTML = '<tr><td colspan="4" class="empty">No open positions.</td></tr>'; return; }
-  tbody.innerHTML = d.positions.map(p =>
-    \`<tr>
+  if (!d.positions?.length) { tbody.innerHTML = '<tr><td colspan="9" class="empty">No open positions.</td></tr>'; return; }
+  tbody.innerHTML = d.positions.map(p => {
+    const pnl = Number(p.unrealizedPnlUsd);
+    const pnlValid = Number.isFinite(pnl);
+    const pnlClass = pnlValid ? (pnl >= 0 ? 'var(--accent2)' : 'var(--danger)') : 'var(--muted)';
+    return \`<tr>
       <td>\${p.productId}</td>
       <td>$\${fmt(p.entryPrice, 2)}</td>
+      <td>$\${fmt(p.markPrice, 2)}</td>
+      <td><span style="color:\${pnlClass}">\${pnlValid ? (pnl >= 0 ? '+' : '') + '$' + fmt(pnl, 2) : '—'}</span></td>
       <td><span style="color:var(--accent2)">$\${fmt(p.tpPrice, 2)}</span></td>
       <td><span style="color:var(--danger)">$\${fmt(p.slPrice, 2)}</span></td>
-    </tr>\`
-  ).join('');
+      <td>\${ageSpan(p.signalTs)}</td>
+      <td>\${ageSpan(p.openedAt)}</td>
+      <td>\${ageSpan(p.marketTs ?? p.lastMarketUpdateTs)}</td>
+    </tr>\`;
+  }).join('');
+
+  addLog('info', 'UI_REFRESH_TICK', 'Positions refreshed (' + (d.positions?.length ?? 0) + ', ws=' + (d.wsConnected ? 'on' : 'off') + ').');
 }
 
 // ── Signals ──
@@ -444,7 +462,7 @@ async function loadSignals() {
       <td>\${s.slPrice ? '$'+fmt(s.slPrice) : '—'}</td>
       <td>\${s.indicators?.trend1d ?? '—'}</td>
       <td>\${s.indicators?.rsi4h ? fmt(s.indicators.rsi4h, 1) : '—'}</td>
-      <td style="color:var(--muted)">\${s.ts ? ago(s.ts) : '—'}</td>
+      <td>\${ageSpan(s.ts)}</td>
     </tr>\`;
   }).join('');
 }
@@ -516,13 +534,21 @@ async function loadLogs() {
   await Promise.all([loadHealth(), loadBalances(), loadSignals(), loadOrders(), loadPositions()]);
 }
 
+function refreshAgeCells() {
+  document.querySelectorAll('[data-age-ts]').forEach((el) => {
+    const ts = Number(el.dataset.ageTs);
+    el.textContent = ago(ts);
+  });
+}
+
 // ── Auto-refresh ──
 function startAutoRefresh() {
   setInterval(loadHealth,    10000);
   setInterval(loadBalances,  30000);
   setInterval(loadSignals,   15000);
   setInterval(loadOrders,    15000);
-  setInterval(loadPositions, 15000);
+  setInterval(loadPositions, 5000);
+  setInterval(refreshAgeCells, 1000);
 }
 
 // ── Init ──
