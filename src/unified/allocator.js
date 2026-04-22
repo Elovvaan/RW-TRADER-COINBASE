@@ -14,19 +14,66 @@ function toExposureUsd(position) {
   return Math.abs(price * size);
 }
 
-export async function allocateSignal({ signal, positions, balancesByBroker, dailyLossUsd, adapter, proposedNotionalUsd, executionContext = {} }) {
+function toHoldingUsd(currency, balance, priceMap) {
+  const total = Number(balance?.total || 0);
+  if (!Number.isFinite(total) || total <= 0) return 0;
+  if (currency === 'USD') return total;
+  const px = Number(priceMap?.[`${currency}-USD`]);
+  if (!Number.isFinite(px) || px <= 0) return 0;
+  return total * px;
+}
+
+function logAllocationDecision(payload) {
+  log.info('ALLOCATION_DECISION', payload);
+  log.info('CAPITAL_ALLOCATION_DECISION', payload);
+}
+
+export async function allocateSignal({ signal, positions, balancesByBroker, dailyLossUsd, adapter, proposedNotionalUsd, priceMap = {}, executionContext = {} }) {
   const limits = config.allocator;
   const riskPct = Number(signal.riskPct);
+  const coinbaseBalances = balancesByBroker.coinbase || {};
+  const coinbaseUsd = Number(coinbaseBalances?.USD?.available || 0);
+  const stockUsd = Number(balancesByBroker.stocks?.USD?.available || 0);
+  const btcHoldingUsd = toHoldingUsd('BTC', coinbaseBalances.BTC, priceMap);
+  const ethHoldingUsd = toHoldingUsd('ETH', coinbaseBalances.ETH, priceMap);
+  const coinbasePortfolioUsd = Object.entries(coinbaseBalances).reduce((sum, [currency, bal]) => {
+    return sum + toHoldingUsd(currency, bal, priceMap);
+  }, 0);
+  const targetAsset = String(signal.symbol || '').split('-')[0] || null;
+  const rotationCandidates = ['BTC', 'ETH']
+    .filter((currency) => currency !== targetAsset)
+    .map((currency) => ({
+      currency,
+      productId: `${currency}-USD`,
+      available: Number(coinbaseBalances?.[currency]?.available || 0),
+      price: Number(priceMap?.[`${currency}-USD`] || 0),
+    }))
+    .map((candidate) => ({
+      ...candidate,
+      usdValue: candidate.available * candidate.price,
+    }))
+    .filter((candidate) => candidate.available > 0 && candidate.usdValue > 0 && candidate.price > 0);
+  const rotatableUsd = rotationCandidates.reduce((sum, candidate) => sum + candidate.usdValue, 0);
+
+  log.info('CAPITAL_STATE_READ', {
+    market: signal.market,
+    symbol: signal.symbol,
+    usdAvailable: coinbaseUsd,
+    btcHoldingUsd,
+    ethHoldingUsd,
+    rotatableUsd,
+    coinbasePortfolioUsd,
+  });
 
   if (dailyLossUsd >= limits.maxTotalDailyLossUsd) {
     const decision = { approved: false, reason: 'MAX_TOTAL_DAILY_LOSS_REACHED' };
-    log.info('CAPITAL_ALLOCATION_DECISION', { market: signal.market, symbol: signal.symbol, ...decision });
+    logAllocationDecision({ market: signal.market, symbol: signal.symbol, ...decision });
     return decision;
   }
 
   if (!Number.isFinite(riskPct) || riskPct <= 0 || riskPct > limits.perPositionMaxRisk) {
     const decision = { approved: false, reason: 'PER_POSITION_RISK_EXCEEDED' };
-    log.info('CAPITAL_ALLOCATION_DECISION', { market: signal.market, symbol: signal.symbol, ...decision, riskPct });
+    logAllocationDecision({ market: signal.market, symbol: signal.symbol, ...decision, riskPct });
     return decision;
   }
 
@@ -37,14 +84,17 @@ export async function allocateSignal({ signal, positions, balancesByBroker, dail
     .filter((position) => position.market === 'equities')
     .reduce((sum, position) => sum + toExposureUsd(position), 0);
 
-  const coinbaseUsd = Number(balancesByBroker.coinbase?.USD?.available || 0);
-  const stockUsd = Number(balancesByBroker.stocks?.USD?.available || 0);
   const marketCash = signal.market === 'crypto' ? coinbaseUsd : stockUsd;
+  const availableCapitalUsd = signal.market === 'crypto'
+    ? marketCash + rotatableUsd
+    : marketCash;
   const marketExposureUsd = signal.market === 'crypto' ? cryptoExposure : equityExposure;
-  const marketPortfolioUsd = marketCash + marketExposureUsd;
+  const marketPortfolioUsd = signal.market === 'crypto'
+    ? Math.max(coinbasePortfolioUsd, marketCash + marketExposureUsd)
+    : (marketCash + marketExposureUsd);
   if (marketPortfolioUsd <= 0) {
     const decision = { approved: false, reason: 'NO_ALLOCATABLE_CAPITAL' };
-    log.info('CAPITAL_ALLOCATION_DECISION', { market: signal.market, symbol: signal.symbol, ...decision, marketCash, marketExposureUsd });
+    logAllocationDecision({ market: signal.market, symbol: signal.symbol, ...decision, marketCash, marketExposureUsd });
     return decision;
   }
 
@@ -52,12 +102,11 @@ export async function allocateSignal({ signal, positions, balancesByBroker, dail
   const marketRemainingUsd = (marketPortfolioUsd * marketLimitPct) - marketExposureUsd;
   if (marketRemainingUsd <= 0) {
     const decision = { approved: false, reason: 'MARKET_ALLOCATION_LIMIT_REACHED' };
-    log.info('CAPITAL_ALLOCATION_DECISION', { market: signal.market, symbol: signal.symbol, ...decision, marketPortfolioUsd, marketExposureUsd, marketLimitPct });
+    logAllocationDecision({ market: signal.market, symbol: signal.symbol, ...decision, marketPortfolioUsd, marketExposureUsd, marketLimitPct });
     return decision;
   }
 
-  const availableCash = marketCash;
-  const targetNotional = availableCash * limits.targetNotionalPct;
+  const targetNotional = availableCapitalUsd * limits.targetNotionalPct;
   const confidence = Number(signal.confidence || 0);
   // Confidence scales target sizing while preserving a 25% floor so approved
   // low-confidence but valid entries still receive a non-trivial allocation.
@@ -86,23 +135,23 @@ export async function allocateSignal({ signal, positions, balancesByBroker, dail
     );
     const maxPct = Math.max(minPct, Math.min(MAX_SINGLE_TRADE_PCT, Number(config.smallAccount.maxPositionPct || 0.5)));
     const confidenceScaledPct = minPct + ((maxPct - minPct) * Math.min(1, Math.max(0, confidence)));
-    requestedNotional = Math.max(requestedNotional, availableCash * confidenceScaledPct);
+    requestedNotional = Math.max(requestedNotional, availableCapitalUsd * confidenceScaledPct);
     if (forceMinNotional) {
-      requestedNotional = Math.max(requestedNotional, availableCash * minPct);
+      requestedNotional = Math.max(requestedNotional, availableCapitalUsd * minPct);
     }
   }
 
   if (signal.market === 'crypto' && forceTrade && !forceMinNotional) {
-    requestedNotional = Math.max(requestedNotional, availableCash * limits.targetNotionalPct);
+    requestedNotional = Math.max(requestedNotional, availableCapitalUsd * limits.targetNotionalPct);
   }
 
-  if (signal.market === 'crypto' && availableCash <= 0) {
+  if (signal.market === 'crypto' && availableCapitalUsd <= 0) {
     const decision = { approved: false, reason: 'NO_ALLOCATABLE_CAPITAL' };
-    log.info('CAPITAL_ALLOCATION_DECISION', {
+    logAllocationDecision({
       market: signal.market,
       symbol: signal.symbol,
       ...decision,
-      availableCash,
+      availableCapitalUsd,
       note: 'NO_USD_FOR_ENTRY_PREFERS_EXISTING_CRYPTO_MANAGEMENT',
     });
     return decision;
@@ -118,20 +167,20 @@ export async function allocateSignal({ signal, positions, balancesByBroker, dail
   const notionalUsd = Math.min(
     Math.max(0, requestedNotional),
     marketRemainingUsd,
-    availableCash,
-    availableCash * maxSingleTradeCashPct,
+    availableCapitalUsd,
+    availableCapitalUsd * maxSingleTradeCashPct,
     riskBoundNotional,
   );
 
   if (!Number.isFinite(notionalUsd) || notionalUsd <= 0) {
     const decision = { approved: false, reason: 'NO_VALID_ORDER_NOTIONAL' };
-    log.info('CAPITAL_ALLOCATION_DECISION', {
+    logAllocationDecision({
       market: signal.market,
       symbol: signal.symbol,
       ...decision,
       requestedNotional,
       marketRemainingUsd,
-      availableCash,
+      availableCapitalUsd,
       riskBoundNotional,
     });
     return decision;
@@ -143,16 +192,56 @@ export async function allocateSignal({ signal, positions, balancesByBroker, dail
   });
   if (!minCheck.valid) {
     const decision = { approved: false, reason: 'BROKER_MIN_ORDER_REJECTED', details: minCheck.reason };
-    log.info('CAPITAL_ALLOCATION_DECISION', { market: signal.market, symbol: signal.symbol, ...decision, notionalUsd });
+    logAllocationDecision({ market: signal.market, symbol: signal.symbol, ...decision, notionalUsd });
     return decision;
   }
 
-  const decision = { approved: true, reason: 'ALLOCATOR_APPROVED', notionalUsd };
-  log.info('CAPITAL_ALLOCATION_DECISION', {
+  const requiredRotationUsd = signal.market === 'crypto'
+    ? Math.max(0, notionalUsd - marketCash)
+    : 0;
+  const rotationPlan = requiredRotationUsd > 0
+    ? {
+      requiredUsd: requiredRotationUsd,
+      sources: rotationCandidates.map((candidate) => ({
+        currency: candidate.currency,
+        productId: candidate.productId,
+        usdToRotate: requiredRotationUsd * (candidate.usdValue / Math.max(rotatableUsd, 1)),
+      })),
+    }
+    : null;
+
+  if (rotationPlan) {
+    log.info('ROTATION_DECISION', {
+      market: signal.market,
+      symbol: signal.symbol,
+      requiredUsd: rotationPlan.requiredUsd,
+      sources: rotationPlan.sources,
+    });
+  } else {
+    log.info('ROTATION_DECISION', {
+      market: signal.market,
+      symbol: signal.symbol,
+      requiredUsd: 0,
+      sources: [],
+    });
+  }
+  log.info('REBALANCE_DECISION', {
+    market: signal.market,
+    symbol: signal.symbol,
+    targetAsset,
+    action: requiredRotationUsd > 0 ? 'ROTATE_INTO_TARGET' : 'MAINTAIN',
+    usdAvailable: marketCash,
+    rotatableUsd,
+  });
+
+  const decision = { approved: true, reason: 'ALLOCATOR_APPROVED', notionalUsd, rotationPlan };
+  logAllocationDecision({
     market: signal.market,
     symbol: signal.symbol,
     ...decision,
-    availableCash,
+    availableCapitalUsd,
+    usdAvailable: marketCash,
+    rotatableUsd,
     marketExposureUsd,
     marketPortfolioUsd,
     confidence,

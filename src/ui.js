@@ -467,6 +467,10 @@ export function getDashboardHTML() {
             <div class="kv"><span class="k">Position</span><span id="chart-detail-position">Flat</span></div>
             <div class="kv"><span class="k">Mode</span><span id="chart-detail-mode">Autonomous-first</span></div>
             <div class="kv"><span class="k">Regime</span><span id="chart-detail-regime">—</span></div>
+            <div style="display:flex;gap:8px;align-items:center;margin-top:8px;">
+              <label class="subtle" for="manual-size-usd">Manual size (USD)</label>
+              <input id="manual-size-usd" type="number" min="1" step="1" value="50" style="width:140px;background:#0d1a2e;border:1px solid #2b4368;color:#dce8ff;border-radius:8px;padding:6px 8px;" />
+            </div>
 
             <div class="control-grid" style="margin-top:10px;">
               <button id="manual-buy" class="btn-safe">Buy (manual override)</button>
@@ -546,6 +550,7 @@ export function getDashboardHTML() {
               </select>
             </div>
             <div class="kv" style="margin-top:10px;"><span class="k">Indicator visibility</span><span id="indicator-status">ON</span></div>
+            <div class="kv"><span class="k">Crypto max open positions</span><span id="control-max-open-crypto">—</span></div>
             <div class="note" style="margin-top:8px;">Manual actions are available for override only; autonomous signal-routing remains the default operating mode.</div>
           </div>
         </div>
@@ -624,6 +629,7 @@ export function getDashboardHTML() {
     signalHistory: [],
     strategyLog: [],
     pendingControls: false,
+    manualStatusMessage: '',
   };
 
   function fmt(v, dec) {
@@ -866,6 +872,7 @@ export function getDashboardHTML() {
     document.getElementById('top-kill').textContent = control.globalKillSwitch ? 'ARMED' : 'CLEAR';
     document.getElementById('top-mode').textContent = control.strategyMode || state.strategyMode || 'SWING';
     document.getElementById('top-updated').textContent = new Date().toLocaleTimeString();
+    document.getElementById('control-max-open-crypto').textContent = String(control.maxOpenCryptoPositions || 3);
 
     document.getElementById('dot-crypto').className = 'dot ' + (control.cryptoAutoEnabled ? 'ok' : 'bad');
     document.getElementById('dot-stocks').className = 'dot ' + (control.stockPaperEnabled ? 'ok' : 'warn');
@@ -879,9 +886,10 @@ export function getDashboardHTML() {
     document.getElementById('manual-buy').disabled = !manualAllowed;
     document.getElementById('manual-sell').disabled = !manualAllowed;
     document.getElementById('manual-close').disabled = !manualAllowed;
-    document.getElementById('manual-note').textContent = manualAllowed
+    const defaultManualNote = manualAllowed
       ? 'Manual override is available in ' + authority + ' mode; autonomous routing remains primary.'
       : 'Authority OFF blocks manual override.';
+    document.getElementById('manual-note').textContent = state.manualStatusMessage || defaultManualNote;
 
     document.getElementById('home-kpi-portfolio').textContent = usd(portfolioValue);
     document.getElementById('home-kpi-exposure').textContent = 'Exposure: ' + state.positions.length + ' open positions';
@@ -1186,6 +1194,8 @@ export function getDashboardHTML() {
     document.getElementById('control-timeframe').textContent = state.timeframe;
     document.getElementById('control-timeframe-select').value = state.timeframe;
     document.getElementById('indicator-status').textContent = state.indicatorsOn ? 'ON' : 'OFF';
+    const maxOpen = state.dashboard?.controlPanel?.maxOpenCryptoPositions;
+    document.getElementById('control-max-open-crypto').textContent = String(maxOpen || 3);
   }
 
   async function setControl(patch) {
@@ -1207,6 +1217,54 @@ export function getDashboardHTML() {
   function scheduleRefresh() {
     if (state.refreshTimerId) clearInterval(state.refreshTimerId);
     state.refreshTimerId = setInterval(load, state.refreshIntervalMs);
+  }
+
+  async function submitManualOverride(side) {
+    const symbol = state.selectedSymbol;
+    const sizeInput = document.getElementById('manual-size-usd');
+    const sizeUsd = Number(sizeInput && sizeInput.value);
+    const normalizedSide = String(side || '').toUpperCase();
+    const manualNote = document.getElementById('manual-note');
+
+    logLine('MANUAL_OVERRIDE_CLICKED · ' + normalizedSide + ' · ' + symbol);
+    state.manualStatusMessage = 'MANUAL_OVERRIDE_CLICKED: ' + normalizedSide + ' ' + symbol;
+    if (manualNote) manualNote.textContent = state.manualStatusMessage;
+
+    try {
+      const resp = await fetch('/manual-override', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          symbol: symbol,
+          side: normalizedSide,
+          sizeUsd: sizeUsd,
+        }),
+      });
+      const payload = await resp.json().catch(function() { return {}; });
+      if (!resp.ok || !payload.ok) {
+        const reason = payload.reason || ('HTTP_' + resp.status);
+        const message = payload.message || reason;
+        logLine('MANUAL_OVERRIDE_REJECTED · ' + symbol + ' · ' + reason + ' · ' + message);
+        state.manualStatusMessage = 'MANUAL_OVERRIDE_REJECTED: ' + message;
+        if (manualNote) manualNote.textContent = state.manualStatusMessage;
+        return;
+      }
+
+      logLine('MANUAL_OVERRIDE_SUBMITTED · ' + payload.side + ' · ' + payload.symbol + ' · ' + (payload.sizeUsd || 0) + ' USD');
+      state.manualStatusMessage = 'MANUAL_OVERRIDE_SUBMITTED: ' + payload.side + ' ' + payload.symbol + ' ' + (payload.sizeUsd || 0) + ' USD';
+      if (manualNote) manualNote.textContent = state.manualStatusMessage;
+      if (payload.filled) {
+        logLine('MANUAL_OVERRIDE_FILLED · ' + payload.side + ' · ' + payload.symbol);
+        state.manualStatusMessage = 'MANUAL_OVERRIDE_FILLED: ' + payload.side + ' ' + payload.symbol;
+        if (manualNote) manualNote.textContent = state.manualStatusMessage;
+      }
+      await load();
+    } catch (err) {
+      const msg = err && err.message ? err.message : String(err || 'unknown');
+      logLine('MANUAL_OVERRIDE_REJECTED · ' + symbol + ' · REQUEST_FAILED · ' + msg);
+      state.manualStatusMessage = 'MANUAL_OVERRIDE_REJECTED: ' + msg;
+      if (manualNote) manualNote.textContent = state.manualStatusMessage;
+    }
   }
 
   function bindTabs() {
@@ -1247,13 +1305,13 @@ export function getDashboardHTML() {
     });
 
     document.getElementById('manual-buy').addEventListener('click', function() {
-      logLine('Manual BUY requested for ' + state.selectedSymbol + ' (preview only; backend execution not wired here).');
+      void submitManualOverride('BUY');
     });
     document.getElementById('manual-sell').addEventListener('click', function() {
-      logLine('Manual SELL requested for ' + state.selectedSymbol + ' (preview only; backend execution not wired here).');
+      void submitManualOverride('SELL');
     });
     document.getElementById('manual-close').addEventListener('click', function() {
-      logLine('Manual CLOSE requested for ' + state.selectedSymbol + ' (preview only; backend execution not wired here).');
+      void submitManualOverride('CLOSE');
     });
 
     document.getElementById('refresh-interval').addEventListener('change', function(e) {

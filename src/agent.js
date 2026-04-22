@@ -258,7 +258,7 @@ export class TradingAgent {
   _calculateMaxPositionsForEquity(totalEquityUsd, smallAccountMode) {
     if (!smallAccountMode) return config.dayTrade.maxOpenPositions;
     if (totalEquityUsd <= config.smallAccount.lowEquitySinglePositionUsd) return 1;
-    return Math.max(1, Math.min(2, config.smallAccount.maxOpenPositions));
+    return Math.max(1, Math.min(3, config.smallAccount.maxOpenPositions));
   }
 
   _effectiveDayTradeThreshold() {
@@ -294,8 +294,11 @@ export class TradingAgent {
 
   _forceTradeReason(accountState) {
     const noTradeTooLong = (Date.now() - this.lastTradeExecutedAt) >= config.dayTrade.inactivityForceTradeMs;
-    if (accountState?.idleCapitalForcingActive) return 'IDLE_CAPITAL_FORCE';
-    if (noTradeTooLong) return 'NO_TRADE_TIMEOUT';
+    const idleCapitalHigh = Number(accountState?.idleCapitalPct || 0) >= Number(config.dayTrade.idleCapitalThresholdPct || 0.7);
+    const idleCapitalForced = Boolean(accountState?.idleCapitalForcingActive) || idleCapitalHigh;
+    if (noTradeTooLong && idleCapitalForced) {
+      return accountState?.idleCapitalForcingActive ? 'IDLE_CAPITAL_FORCE' : 'NO_TRADE_TIMEOUT_IDLE_CAPITAL';
+    }
     return null;
   }
 
@@ -311,7 +314,13 @@ export class TradingAgent {
     if (config.strategyMode !== 'DAY_TRADE' || summary.executedTrades > 0) return false;
     const reason = this._forceTradeReason(accountState);
     if (!reason) return false;
-    const bestCandidate = [...candidates]
+    const dayTradeThreshold = this._effectiveDayTradeThreshold();
+    const relaxedThreshold = Math.max(0.2, dayTradeThreshold - 0.08);
+    const eligibleCandidates = candidates.filter((candidate) => {
+      const confidence = Number(candidate?.signal?.confidence || 0);
+      return confidence >= relaxedThreshold;
+    });
+    const bestCandidate = [...eligibleCandidates]
       .sort((a, b) => Number(b.signal?.confidence || 0) - Number(a.signal?.confidence || 0))[0];
     if (!bestCandidate) return false;
 
@@ -358,6 +367,7 @@ export class TradingAgent {
       productId: bestCandidate.productId,
       confidence: bestCandidate.signal?.confidence,
       forceReason: reason,
+      relaxedThreshold,
     });
     log.info('DAY_TRADE_ORDER_SUBMITTED', {
       productId: bestCandidate.productId,

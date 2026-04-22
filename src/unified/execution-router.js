@@ -80,7 +80,20 @@ export class UnifiedExecutionRouter {
       const modeLimit = config.strategyMode === 'DAY_TRADE'
         ? effectiveMaxOpenPositions
         : config.tradingPairs.length;
+      log.info(`MAX_POSITIONS_LIMIT=${modeLimit}`, {
+        market: signal.market,
+        symbol: signal.symbol,
+        openPositions: openCryptoPositions,
+        maxPositions: modeLimit,
+      });
       if (openCryptoPositions >= modeLimit) {
+        log.info('POSITION_OPEN_BLOCKED', {
+          market: signal.market,
+          symbol: signal.symbol,
+          openPositions: openCryptoPositions,
+          maxPositions: modeLimit,
+          reason: 'MAX_POSITIONS_REACHED',
+        });
         log.info('MAX_POSITIONS_BLOCKED', {
           market: signal.market,
           symbol: signal.symbol,
@@ -89,6 +102,12 @@ export class UnifiedExecutionRouter {
         });
         return { executed: false, reason: 'MAX_POSITIONS_REACHED' };
       }
+      log.info('POSITION_OPEN_ALLOWED', {
+        market: signal.market,
+        symbol: signal.symbol,
+        openPositions: openCryptoPositions,
+        maxPositions: modeLimit,
+      });
     }
 
     const duplicateWindowMs = signal.market === 'crypto'
@@ -128,8 +147,11 @@ export class UnifiedExecutionRouter {
       ...stockAdapter.getOpenPositions(),
     ];
 
+    const manualNotionalUsd = Number(executionContext.manualNotionalUsd);
     const proposedNotionalUsd = signal.market === 'crypto'
-      ? await coinbaseAdapter.estimateEntryNotional({ priceMap }).catch(() => null)
+      ? (Number.isFinite(manualNotionalUsd) && manualNotionalUsd > 0
+        ? manualNotionalUsd
+        : await coinbaseAdapter.estimateEntryNotional({ priceMap }).catch(() => null))
       : null;
 
     const allocation = await allocateSignal({
@@ -142,6 +164,7 @@ export class UnifiedExecutionRouter {
       dailyLossUsd: portfolio.getDailyLoss() + stockAdapter.getDailyLossUsd(),
       adapter,
       proposedNotionalUsd,
+      priceMap,
       executionContext,
     });
 

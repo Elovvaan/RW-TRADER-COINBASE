@@ -6,13 +6,14 @@ import { URL } from 'url';
 import config from '../config/index.js';
 import log from './logging/index.js';
 import { getBalances } from './accounts/index.js';
-import { listProducts, getPriceSnapshots } from './products/index.js';
-import { listOpenOrders, listFills, cancelAllOpenOrders } from './orders/index.js';
-import { setKillSwitch, getKillSwitch } from './risk/index.js';
+import { listProducts, getProduct } from './products/index.js';
+import { listOpenOrders, listFills, cancelAllOpenOrders, createOrder } from './orders/index.js';
+import { setKillSwitch, getKillSwitch, validateMinimumOrder } from './risk/index.js';
 import portfolio from './portfolio/index.js';
 import stockAdapter from './brokers/stock-adapter.js';
 import coinbaseAdapter from './brokers/coinbase-adapter.js';
 import unifiedPositionRegistry from './unified/position-registry.js';
+import unifiedExecutionRouter from './unified/execution-router.js';
 
 // Set by index.js after agent starts
 let _agent = null;
@@ -81,6 +82,7 @@ function getControlState() {
     stockPaperEnabled: config.stockPaperEnabled,
     strategyMode: config.strategyMode,
     authority: config.authority,
+    maxOpenCryptoPositions: config.dayTrade.maxOpenPositions,
     globalKillSwitch: getKillSwitch(),
   };
 }
@@ -157,6 +159,154 @@ function json(res, status, data) {
 
 function notFound(res) {
   json(res, 404, { error: 'Not found' });
+}
+
+function buildPriceMap() {
+  const map = {};
+  for (const productId of config.tradingPairs) {
+    const snap = _agent?.feed?.getSnapshot?.(productId);
+    if (snap?.price) map[productId] = Number(snap.price);
+  }
+  return map;
+}
+
+function normalizeManualOverrideInput(body = {}) {
+  const symbol = String(body.symbol || '').toUpperCase().trim();
+  const sideRaw = String(body.side || '').toUpperCase().trim();
+  const side = sideRaw === 'CLOSE' ? 'SELL' : sideRaw;
+  const requestedClose = sideRaw === 'CLOSE';
+  const sizeUsd = Number(body.sizeUsd);
+  return { symbol, side, requestedClose, sizeUsd };
+}
+
+async function executeManualOverrideOrder(input) {
+  const { symbol, side, requestedClose, sizeUsd } = normalizeManualOverrideInput(input);
+  log.info('MANUAL_OVERRIDE_CLICKED', { symbol, side: requestedClose ? 'CLOSE' : side, sizeUsd });
+
+  if (!symbol || !config.tradingPairs.includes(symbol)) {
+    return { ok: false, code: 400, reason: 'INVALID_SYMBOL', message: `symbol must be one of: ${config.tradingPairs.join(', ')}` };
+  }
+  if (!['BUY', 'SELL'].includes(side)) {
+    return { ok: false, code: 400, reason: 'INVALID_SIDE', message: 'side must be BUY, SELL, or CLOSE' };
+  }
+  if (config.authority === 'OFF') {
+    return { ok: false, code: 403, reason: 'AUTHORITY_OFF', message: 'Authority OFF blocks manual override' };
+  }
+  if (!config.cryptoAutoEnabled) {
+    return { ok: false, code: 409, reason: 'CRYPTO_AUTO_DISABLED', message: 'Crypto live engine is disabled' };
+  }
+  if (getKillSwitch()) {
+    return { ok: false, code: 409, reason: 'GLOBAL_KILL_SWITCH_ACTIVE', message: 'Global kill switch is active' };
+  }
+
+  const snapshot = _agent?.feed?.getSnapshot?.(symbol) || null;
+  if (!snapshot || !Number.isFinite(Number(snapshot.price))) {
+    return { ok: false, code: 409, reason: 'NO_MARKET_SNAPSHOT', message: `No live snapshot available for ${symbol}` };
+  }
+
+  if (side === 'BUY') {
+    if (!Number.isFinite(sizeUsd) || sizeUsd <= 0) {
+      return { ok: false, code: 400, reason: 'INVALID_SIZE_USD', message: 'sizeUsd must be a positive number for BUY' };
+    }
+    const signal = {
+      market: 'crypto',
+      broker: 'coinbase',
+      symbol,
+      side: 'BUY',
+      confidence: 1,
+      entry: Number(snapshot.price),
+      tp: Number(snapshot.price) * (1 + config.dayTrade.takeProfitPct),
+      sl: Number(snapshot.price) * (1 - config.dayTrade.stopLossPct),
+      riskPct: config.risk.stopLossPct,
+      reason: 'MANUAL_OVERRIDE',
+      ts: Date.now(),
+      indicators: {
+        regime: 'MANUAL_OVERRIDE',
+        strategyMode: config.strategyMode,
+      },
+    };
+    const execution = await unifiedExecutionRouter.route({
+      signal,
+      snapshot,
+      priceMap: buildPriceMap(),
+      executionContext: {
+        manualOverride: true,
+        forceTrade: true,
+        forceMinNotional: true,
+        maxOpenPositions: config.dayTrade.maxOpenPositions,
+        manualNotionalUsd: sizeUsd,
+      },
+    });
+    if (!execution?.executed) {
+      return {
+        ok: false,
+        code: 409,
+        reason: execution?.reason || 'MANUAL_OVERRIDE_EXECUTION_BLOCKED',
+        message: execution?.details?.reason || execution?.reason || 'Manual BUY was rejected',
+        details: execution?.details || null,
+      };
+    }
+    return {
+      ok: true,
+      code: 200,
+      reason: 'MANUAL_OVERRIDE_EXECUTED',
+      execution,
+      symbol,
+      side: 'BUY',
+      sizeUsd,
+      filled: Boolean(execution?.positionOpened),
+    };
+  }
+
+  const balances = await getBalances();
+  const baseCurrency = symbol.split('-')[0];
+  const availableBase = Number(balances?.[baseCurrency]?.available || 0);
+  if (!Number.isFinite(availableBase) || availableBase <= 0) {
+    return { ok: false, code: 409, reason: 'NO_AVAILABLE_BASE_ASSET', message: `No available ${baseCurrency} to sell` };
+  }
+
+  const mark = Number(snapshot.price);
+  let baseSize = availableBase;
+  if (requestedClose && portfolio.hasPosition(symbol)) {
+    const position = portfolio.getPosition(symbol);
+    baseSize = Math.min(availableBase, Number(position?.baseSize || availableBase));
+  } else if (!requestedClose) {
+    if (!Number.isFinite(sizeUsd) || sizeUsd <= 0) {
+      return { ok: false, code: 400, reason: 'INVALID_SIZE_USD', message: 'sizeUsd must be a positive number for SELL' };
+    }
+    baseSize = Math.min(availableBase, sizeUsd / mark);
+  }
+
+  if (!Number.isFinite(baseSize) || baseSize <= 0) {
+    return { ok: false, code: 409, reason: 'INVALID_SELL_SIZE', message: 'Computed sell size is not valid' };
+  }
+
+  const productMeta = await getProduct(symbol);
+  const minCheck = validateMinimumOrder(productMeta, baseSize, null);
+  if (!minCheck.valid) {
+    return { ok: false, code: 409, reason: 'BROKER_MIN_ORDER_REJECTED', message: minCheck.reason };
+  }
+
+  const result = await createOrder({
+    productId: symbol,
+    side: 'SELL',
+    baseSize: Number(baseSize.toFixed(8)),
+  });
+  const tracked = portfolio.getPosition(symbol);
+  if (!result?.dryRun && tracked && baseSize >= Number(tracked.baseSize || 0) * 0.995) {
+    portfolio.closePosition(symbol, mark, 'manual_override');
+  }
+  return {
+    ok: true,
+    code: 200,
+    reason: 'MANUAL_OVERRIDE_EXECUTED',
+    symbol,
+    side: requestedClose ? 'CLOSE' : 'SELL',
+    sizeUsd: Number((baseSize * mark).toFixed(2)),
+    baseSize: Number(baseSize.toFixed(8)),
+    filled: !result?.dryRun,
+    result,
+  };
 }
 
 async function readBody(req) {
@@ -323,6 +473,56 @@ const routes = {
       json(res, 200, nextState);
     } catch (err) {
       json(res, 400, { error: err.message });
+    }
+  },
+
+  'POST /manual-override': async (req, res) => {
+    try {
+      const body = await readBody(req);
+      const result = await executeManualOverrideOrder(body);
+      if (!result.ok) {
+        log.warn('MANUAL_OVERRIDE_REJECTED', {
+          symbol: body?.symbol || null,
+          side: body?.side || null,
+          sizeUsd: Number(body?.sizeUsd || 0),
+          reason: result.reason,
+          message: result.message,
+        });
+        return json(res, result.code || 409, {
+          ok: false,
+          reason: result.reason,
+          message: result.message,
+          details: result.details || null,
+        });
+      }
+      log.info('MANUAL_OVERRIDE_SUBMITTED', {
+        symbol: result.symbol,
+        side: result.side,
+        sizeUsd: result.sizeUsd,
+      });
+      if (result.filled) {
+        log.info('MANUAL_OVERRIDE_FILLED', {
+          symbol: result.symbol,
+          side: result.side,
+          sizeUsd: result.sizeUsd,
+        });
+      }
+      return json(res, 200, {
+        ok: true,
+        reason: result.reason,
+        symbol: result.symbol,
+        side: result.side,
+        sizeUsd: result.sizeUsd,
+        baseSize: result.baseSize || null,
+        filled: Boolean(result.filled),
+        details: result.execution || result.result || null,
+      });
+    } catch (err) {
+      log.warn('MANUAL_OVERRIDE_REJECTED', {
+        reason: 'MANUAL_OVERRIDE_EXCEPTION',
+        message: err.message,
+      });
+      return json(res, 500, { ok: false, reason: 'MANUAL_OVERRIDE_EXCEPTION', message: err.message });
     }
   },
 

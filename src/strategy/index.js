@@ -209,6 +209,9 @@ async function generateDayTradeSignal(productId, currentPrice, timeframe) {
       && intradayRsi <= config.dayTrade.rsiMax;
     const nearTrend = Number.isFinite(ema21)
       && Math.abs(currentPrice - ema21) / ema21 < config.dayTrade.trendProximityPct;
+    const nearTrendRelaxed = Number.isFinite(ema21)
+      && Math.abs(currentPrice - ema21) / ema21 < (config.dayTrade.trendProximityPct * 1.75);
+    const relaxedFallbackMin = Math.max(0.2, Number(config.dayTrade.fallbackMinConfidence || 0.28) - 0.06);
     const confidence = _dayTradeConfidence({ intradayRsi, ema9, ema21, ema34, regimeFast, regimeSlow });
     const indicators = {
       strategyMode: 'DAY_TRADE',
@@ -235,9 +238,12 @@ async function generateDayTradeSignal(productId, currentPrice, timeframe) {
       && pullbackRsi
       && nearTrend
       && confidence >= config.dayTrade.minConfidence;
-    const fallbackEntry = confidence >= config.dayTrade.fallbackMinConfidence
-      && (shortTermMomentum || microTrendDetected);
-    if (!primaryEntry && regime !== 'BULL' && !fallbackEntry) {
+    const fallbackEntry = confidence >= relaxedFallbackMin
+      && (shortTermMomentum || microTrendDetected || (pullbackRsi && nearTrendRelaxed));
+    const strongBearRejection = regime !== 'BULL'
+      && !shortTermMomentum
+      && microTrendPct < (-MICRO_TREND_THRESHOLD_PCT);
+    if (!primaryEntry && !fallbackEntry && strongBearRejection) {
       return _waitSignal(productId, 'REGIME_BLOCKED', currentPrice, indicators);
     }
     if (!primaryEntry && !fallbackEntry) {
@@ -290,13 +296,14 @@ function _confidence(rsi4h, ema9, ema21, ema21_1d, ema55_1d) {
 
 function _dayTradeConfidence({ intradayRsi, ema9, ema21, ema34, regimeFast, regimeSlow }) {
   let score = 0;
-  if (intradayRsi >= 45 && intradayRsi <= 62) score += 0.35;
-  else score += 0.15;
-  if ((ema9 - ema21) / Math.max(ema21, 1) > 0.0012) score += 0.30;
-  else score += 0.12;
-  if ((regimeFast - regimeSlow) / Math.max(regimeSlow, 1) > 0.003) score += 0.25;
-  else score += 0.12;
-  if (ema21 >= ema34) score += 0.10;
+  if (intradayRsi >= 40 && intradayRsi <= 68) score += 0.32;
+  else score += 0.18;
+  if ((ema9 - ema21) / Math.max(ema21, 1) > 0.0006) score += 0.30;
+  else score += 0.16;
+  if ((regimeFast - regimeSlow) / Math.max(regimeSlow, 1) > 0.0015) score += 0.22;
+  else score += 0.14;
+  if (ema21 >= ema34) score += 0.16;
+  else score += 0.08;
   return Math.min(1, Number(score.toFixed(2)));
 }
 
