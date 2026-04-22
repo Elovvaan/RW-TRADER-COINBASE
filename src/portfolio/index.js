@@ -46,23 +46,23 @@ class PortfolioState {
     const pos = this.positions.get(productId);
     if (!pos) return;
 
-    const pnl = _calculateUnrealizedPnl(pos, exitPrice);
+    const realizedPnl = _calculateUnrealizedPnl(pos, exitPrice);
     this.positions.delete(productId);
 
-    if (pnl < 0) {
-      this._accumulateDailyLoss(Math.abs(pnl));
+    if (realizedPnl < 0) {
+      this._accumulateDailyLoss(Math.abs(realizedPnl));
     }
 
     if (reason === 'stop_loss' || reason === 'stop_out') {
       this.stopCooldowns.set(productId, Date.now());
-      log.stopTriggered({ productId, entryPrice: pos.entryPrice, exitPrice, pnl, reason });
+      log.stopTriggered({ productId, entryPrice: pos.entryPrice, exitPrice, pnl: realizedPnl, reason });
     } else if (reason === 'take_profit') {
-      log.takeProfitTriggered({ productId, entryPrice: pos.entryPrice, exitPrice, pnl });
+      log.takeProfitTriggered({ productId, entryPrice: pos.entryPrice, exitPrice, pnl: realizedPnl });
     } else {
-      log.info('POSITION_CLOSED', { productId, exitPrice, pnl, reason });
+      log.info('POSITION_CLOSED', { productId, exitPrice, pnl: realizedPnl, reason });
     }
 
-    return { pos, exitPrice, pnl, reason };
+    return { pos, exitPrice, pnl: realizedPnl, reason };
   }
 
   updateTrailingStop(productId, currentPrice) {

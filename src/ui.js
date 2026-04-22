@@ -441,7 +441,7 @@ async function loadPositions() {
     </tr>\`;
   }).join('');
 
-  addLog('info', 'UI_REFRESH_TICK', 'Positions refreshed (' + (d.positions?.length ?? 0) + ', ws=' + (d.wsConnected ? 'on' : 'off') + ').');
+  addLog('info', 'UI_REFRESH_TICK', `Positions refreshed (${d.positions?.length ?? 0}, ws=${d.wsConnected ? 'on' : 'off'}).`);
 }
 
 // ── Signals ──

@@ -112,8 +112,9 @@ const routes = {
 
     const positions = (state.positions || []).map((p) => {
       const snap = _agent?.feed?.getSnapshot?.(p.productId) ?? null;
-      const markPrice = Number.isFinite(p.markPrice) ? p.markPrice : (Number.isFinite(snap?.price) ? snap.price : null);
-      const lastPrice = Number.isFinite(p.lastPrice) ? p.lastPrice : (Number.isFinite(snap?.price) ? snap.price : null);
+      const fallbackPrice = Number.isFinite(snap?.price) ? snap.price : null;
+      const markPrice = Number.isFinite(p.markPrice) ? p.markPrice : fallbackPrice;
+      const lastPrice = Number.isFinite(p.lastPrice) ? p.lastPrice : fallbackPrice;
       const marketTs = Number.isFinite(p.lastMarketUpdateTs) ? p.lastMarketUpdateTs : (Number.isFinite(snap?.ts) ? snap.ts : null);
       const unrealizedPnlUsd = Number.isFinite(p.unrealizedPnlUsd)
         ? p.unrealizedPnlUsd
