@@ -634,7 +634,7 @@ export function getDashboardHTML() {
     state.strategyLog.unshift(line);
     state.strategyLog = state.strategyLog.slice(0, MAX_LOG_ENTRIES);
     const logEl = document.getElementById('strategy-log');
-    if (logEl) logEl.textContent = state.strategyLog.join('\n');
+    if (logEl) logEl.textContent = state.strategyLog.join('\\n');
   }
 
   function symbolSignal(symbol) {
