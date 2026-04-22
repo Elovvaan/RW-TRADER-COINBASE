@@ -140,7 +140,6 @@ export class TradingAgent {
         log.info('CRYPTO_ENGINE_DISABLED', { trigger, reason: 'CRYPTO_AUTO_DISABLED' });
       } else {
         for (const productId of config.tradingPairs) {
-
           // Early gate avoids signal generation work while kill switch is active;
           // execution-router also enforces the same safety before order routing.
           if (getKillSwitch()) {
@@ -149,83 +148,83 @@ export class TradingAgent {
           }
 
           const snap = this.feed.getSnapshot(productId);
-        if (!snap) {
-          summary.pairsEvaluated += 1;
-          summary.skippedSignals += 1;
-          log.warn('PAIR_EVALUATED', {
-            trigger,
-            scanId: summary.scanId,
-            productId,
-            action: 'SKIP',
-            reason: 'NO_SNAPSHOT',
-          });
-          log.info('SIGNAL_SKIPPED', { trigger, scanId: summary.scanId, productId, reason: 'NO_SNAPSHOT' });
-          continue;
-        }
-
-        try {
-          const signal = await generateSignal(productId, snap.price);
-          const unifiedSignal = normalizeCryptoSignal(signal);
-          this.signals[`crypto:${productId}`] = unifiedSignal;
-          summary.pairsEvaluated += 1;
-
-          log.info('PAIR_EVALUATED', {
-            trigger,
-            scanId: summary.scanId,
-            productId,
-            action: signal.action,
-            reason: signal.reason,
-            confidence: signal.confidence,
-            snapshotAgeMs: typeof snap.ts === 'number' ? Date.now() - snap.ts : null,
-          });
-
-          if (signal.action !== 'BUY') {
+          if (!snap) {
+            summary.pairsEvaluated += 1;
             summary.skippedSignals += 1;
-            log.info('SIGNAL_SKIPPED', {
+            log.warn('PAIR_EVALUATED', {
               trigger,
               scanId: summary.scanId,
               productId,
-              reason: signal.reason || 'NO_BUY_SIGNAL',
+              action: 'SKIP',
+              reason: 'NO_SNAPSHOT',
+            });
+            log.info('SIGNAL_SKIPPED', { trigger, scanId: summary.scanId, productId, reason: 'NO_SNAPSHOT' });
+            continue;
+          }
+
+          try {
+            const signal = await generateSignal(productId, snap.price);
+            const unifiedSignal = normalizeCryptoSignal(signal);
+            this.signals[`crypto:${productId}`] = unifiedSignal;
+            summary.pairsEvaluated += 1;
+
+            log.info('PAIR_EVALUATED', {
+              trigger,
+              scanId: summary.scanId,
+              productId,
               action: signal.action,
+              reason: signal.reason,
               confidence: signal.confidence,
+              snapshotAgeMs: typeof snap.ts === 'number' ? Date.now() - snap.ts : null,
             });
-            continue;
-          }
 
-          if (signal.confidence < config.signalConfidenceThreshold) {
-            summary.skippedSignals += 1;
-            log.info('SIGNAL_SKIPPED', {
-              trigger,
-              scanId: summary.scanId,
-              productId,
-              reason: 'CONFIDENCE_BELOW_THRESHOLD',
-              confidence: signal.confidence,
-              threshold: config.signalConfidenceThreshold,
-            });
-            continue;
-          }
+            if (signal.action !== 'BUY') {
+              summary.skippedSignals += 1;
+              log.info('SIGNAL_SKIPPED', {
+                trigger,
+                scanId: summary.scanId,
+                productId,
+                reason: signal.reason || 'NO_BUY_SIGNAL',
+                action: signal.action,
+                confidence: signal.confidence,
+              });
+              continue;
+            }
 
-          const execution = await unifiedExecutionRouter.route({
-            signal: unifiedSignal,
-            snapshot: snap,
-            priceMap,
-          });
-          if (execution?.executed) {
-            summary.executedTrades += 1;
-          } else {
-            summary.skippedSignals += 1;
-            log.info('SIGNAL_SKIPPED', {
-              trigger,
-              scanId: summary.scanId,
-              productId,
-              reason: execution?.reason || 'EXECUTION_NOT_PERFORMED',
+            if (signal.confidence < config.signalConfidenceThreshold) {
+              summary.skippedSignals += 1;
+              log.info('SIGNAL_SKIPPED', {
+                trigger,
+                scanId: summary.scanId,
+                productId,
+                reason: 'CONFIDENCE_BELOW_THRESHOLD',
+                confidence: signal.confidence,
+                threshold: config.signalConfidenceThreshold,
+              });
+              continue;
+            }
+
+            const execution = await unifiedExecutionRouter.route({
+              signal: unifiedSignal,
+              snapshot: snap,
+              priceMap,
             });
+            if (execution?.executed) {
+              summary.executedTrades += 1;
+            } else {
+              summary.skippedSignals += 1;
+              log.info('SIGNAL_SKIPPED', {
+                trigger,
+                scanId: summary.scanId,
+                productId,
+                reason: execution?.reason || 'EXECUTION_NOT_PERFORMED',
+              });
+            }
+          } catch (err) {
+            summary.pairsEvaluated += 1;
+            summary.skippedSignals += 1;
+            log.error('SIGNAL_CYCLE_ERROR', { productId, error: err.message });
           }
-        } catch (err) {
-          summary.pairsEvaluated += 1;
-          summary.skippedSignals += 1;
-          log.error('SIGNAL_CYCLE_ERROR', { productId, error: err.message });
-        }
         }
       }
 
