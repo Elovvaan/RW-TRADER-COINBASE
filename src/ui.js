@@ -978,10 +978,22 @@ export function getDashboardHTML() {
     }).join('');
     document.getElementById('home-fills-body').innerHTML = fillRows || '<tr><td colspan="6" class="neutral">No recent fills</td></tr>';
     const tradeActionRows = state.tradeActions.slice(0, 8).map(function(a) {
+      const symbol = String(a.symbol || EMPTY_VALUE)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+      const reason = String(a.reason || EMPTY_VALUE)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
       return '<tr>' +
-        '<td>' + (a.symbol || EMPTY_VALUE) + '</td>' +
+        '<td>' + symbol + '</td>' +
         '<td>' + actionBadge(a.type) + '</td>' +
-        '<td>' + (a.reason || EMPTY_VALUE) + '</td>' +
+        '<td>' + reason + '</td>' +
         '<td class="num">' + usd(a.notionalUsd || 0) + '</td>' +
         '<td>' + age(a.ts) + '</td>' +
       '</tr>';
