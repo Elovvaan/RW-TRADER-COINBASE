@@ -6,6 +6,7 @@ import portfolio from '../portfolio/index.js';
 import { allocateSignal } from './allocator.js';
 import { getKillSwitch } from '../risk/index.js';
 import { createOrder } from '../orders/index.js';
+import { generateSignal } from '../strategy/index.js';
 
 function toCryptoUnifiedPositions() {
   return portfolio.getAllPositions().map((position) => ({
@@ -32,6 +33,7 @@ export class UnifiedExecutionRouter {
       equities: stockAdapter,
     };
     this.tradeActions = [];
+    this.lastBtcUtilizationAt = 0;
   }
 
   async route({ signal, snapshot, priceMap, executionContext = {} }) {
@@ -211,7 +213,9 @@ export class UnifiedExecutionRouter {
           allowScaleIn: hasExistingPosition && (pyramidingAllowed || Boolean(executionContext.allowScaleIn)),
         },
       });
-      const tradeType = hasExistingPosition ? 'scale-in' : 'fresh-buy';
+      const tradeType = signal.symbol === 'BTC-USD' && hasExistingPosition
+        ? 'SCALE_IN_EXISTING_BTC'
+        : 'FRESH_BUY_FROM_USD';
       if (result?.executed) {
         this._pushTradeAction({
           ts: Date.now(),
@@ -249,7 +253,11 @@ export class UnifiedExecutionRouter {
   }
 
   _pushTradeAction(action) {
-    this.tradeActions.unshift(action);
+    const normalized = {
+      ...action,
+      actionType: action.actionType || action.type || null,
+    };
+    this.tradeActions.unshift(normalized);
     this.tradeActions = this.tradeActions.slice(0, 100);
   }
 
@@ -258,6 +266,121 @@ export class UnifiedExecutionRouter {
   }
 
   async _attemptRotation({ signal, priceMap, balances, reason, executionContext = {} }) {
+    const targetSymbol = String(signal?.symbol || '');
+    const btcPrice = Number(priceMap?.['BTC-USD'] || 0);
+    const btcAvailable = Number(balances?.BTC?.available || 0);
+    const btcNotionalUsd = btcAvailable * btcPrice;
+    const supportedRotationTarget = targetSymbol === 'ETH-USD' || targetSymbol === 'SOL-USD';
+    const minRotationUsd = Math.max(25, Number(executionContext.rotationMinUsd || 75));
+    const minDecisionGap = Number(executionContext.rotationConfidenceGap || 0.12);
+    const cooldownMs = Math.max(60_000, Number(executionContext.btcRotationCooldownMs || 180_000));
+    if (!supportedRotationTarget || !Number.isFinite(btcPrice) || btcPrice <= 0 || btcNotionalUsd < minRotationUsd) {
+      return this._attemptRotationLegacy({ signal, priceMap, balances, reason, executionContext });
+    }
+
+    if ((Date.now() - this.lastBtcUtilizationAt) < cooldownMs) {
+      log.info('BTC_UTILIZATION_DECISION', {
+        symbol: signal.symbol,
+        reason: 'COOLDOWN_ACTIVE',
+        cooldownMs,
+      });
+      return this._attemptRotationLegacy({ signal, priceMap, balances, reason, executionContext });
+    }
+
+    let btcSignal = null;
+    try {
+      btcSignal = await generateSignal('BTC-USD', btcPrice, {
+        mode: config.strategyMode,
+        timeframe: config.dayTrade.defaultTimeframe,
+      });
+    } catch (error) {
+      log.warn('BTC_UTILIZATION_DECISION', {
+        symbol: signal.symbol,
+        reason: 'BTC_SIGNAL_UNAVAILABLE',
+        error: error.message,
+      });
+    }
+
+    const incomingConfidence = Number(signal.confidence || 0);
+    const btcConfidence = Number(btcSignal?.confidence || 0);
+    const btcWeakening = !btcSignal || btcSignal.action !== 'BUY';
+    const incomingMateriallyStronger = incomingConfidence >= (btcConfidence + minDecisionGap);
+    const strategicReason = btcWeakening || incomingMateriallyStronger;
+    log.info('BTC_UTILIZATION_DECISION', {
+      symbol: signal.symbol,
+      fromSymbol: 'BTC-USD',
+      reason,
+      btcWeakening,
+      incomingConfidence,
+      btcConfidence,
+      incomingMateriallyStronger,
+      btcAvailable,
+      btcNotionalUsd,
+      strategicReason,
+    });
+    if (!strategicReason) {
+      return this._attemptRotationLegacy({ signal, priceMap, balances, reason, executionContext });
+    }
+
+    const rotationPct = incomingMateriallyStronger ? 1 : 0.5;
+    const rotationBaseSize = Number((btcAvailable * rotationPct).toFixed(8));
+    if (!Number.isFinite(rotationBaseSize) || rotationBaseSize <= 0) {
+      return this._attemptRotationLegacy({ signal, priceMap, balances, reason, executionContext });
+    }
+
+    const actionType = targetSymbol === 'ETH-USD' ? 'ROTATE_BTC_TO_ETH' : 'ROTATE_BTC_TO_SOL';
+    const decisionLog = rotationPct >= 0.999 ? 'BTC_EXIT_DECISION' : 'BTC_TRIM_DECISION';
+    log.info(decisionLog, {
+      symbol: signal.symbol,
+      fromSymbol: 'BTC-USD',
+      actionType,
+      rotationPct,
+      rotationBaseSize,
+      reason: incomingMateriallyStronger ? 'TARGET_MATERIALLY_STRONGER' : 'BTC_SIGNAL_WEAKENED',
+    });
+    log.info('ROTATION_DECISION', {
+      symbol: signal.symbol,
+      fromSymbol: 'BTC-USD',
+      actionType,
+      reason: incomingMateriallyStronger ? 'TARGET_MATERIALLY_STRONGER' : 'BTC_SIGNAL_WEAKENED',
+    });
+    log.info('EXIT_TO_REALLOCATE', {
+      symbol: signal.symbol,
+      fromSymbol: 'BTC-USD',
+      actionType,
+      reason,
+      rotationPct,
+    });
+
+    try {
+      const result = await createOrder({
+        productId: 'BTC-USD',
+        side: 'SELL',
+        baseSize: rotationBaseSize.toFixed(8),
+      });
+      this.lastBtcUtilizationAt = Date.now();
+      this._pushTradeAction({
+        ts: Date.now(),
+        symbol: 'BTC-USD',
+        side: 'SELL',
+        type: actionType,
+        notionalUsd: btcPrice * rotationBaseSize,
+        reason: 'EXIT_TO_REALLOCATE',
+        actionType,
+      });
+      return Boolean(result);
+    } catch (error) {
+      log.warn('ROTATION_FAILED', {
+        symbol: signal.symbol,
+        fromSymbol: 'BTC-USD',
+        actionType,
+        error: error.message,
+      });
+      return false;
+    }
+  }
+
+  async _attemptRotationLegacy({ signal, priceMap, balances, reason, executionContext = {} }) {
     const candidates = portfolio.getAllPositions()
       .filter((position) => position.productId !== signal.symbol)
       .sort((a, b) => Number(b.unrealizedPnlUsd || 0) - Number(a.unrealizedPnlUsd || 0));
@@ -321,9 +444,10 @@ export class UnifiedExecutionRouter {
         ts: Date.now(),
         symbol: rotationTarget.productId,
         side: 'SELL',
-        type: trimPct >= 0.999 ? 'rotation' : 'trim',
+        type: trimPct >= 0.999 ? 'EXIT_BTC_TO_USD' : 'TRIM_BTC_FOR_RISK',
         notionalUsd: Number(priceMap?.[rotationTarget.productId] || 0) * trimBaseSize,
         reason: 'EXIT_TO_REALLOCATE',
+        actionType: trimPct >= 0.999 ? 'EXIT_BTC_TO_USD' : 'TRIM_BTC_FOR_RISK',
       });
       return true;
     } catch (error) {

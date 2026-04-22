@@ -228,6 +228,8 @@ export class TradingAgent {
     if (!config.cryptoAutoEnabled) return null;
     const balances = await unifiedExecutionRouter.adapters.crypto.getBalances();
     const availableUsd = Number(balances?.USD?.available || 0);
+    const availableBtc = Number(balances?.BTC?.available || 0);
+    const availableEth = Number(balances?.ETH?.available || 0);
     const totalEquityUsd = portfolioValueUSD(balances, priceMap);
     const availableCryptoUsd = Math.max(0, totalEquityUsd - availableUsd);
     const smallAccountMode = totalEquityUsd > 0 && totalEquityUsd <= config.smallAccount.equityThresholdUsd;
@@ -239,9 +241,23 @@ export class TradingAgent {
       this.idleCapitalSince = null;
     }
     const maxConcurrentPositions = this._calculateMaxPositionsForEquity(totalEquityUsd, smallAccountMode);
+    log.info('CAPITAL_STATE_READ', {
+      availableUsd,
+      availableBtc,
+      availableEth,
+      openCryptoPositions: portfolio.getAllPositions().map((position) => ({
+        productId: position.productId,
+        baseSize: Number(position.baseSize || 0),
+        entryPrice: Number(position.entryPrice || 0),
+      })),
+      totalEquityUsd,
+      ts: now,
+    });
     return {
       balances,
       availableUsd,
+      availableBtc,
+      availableEth,
       availableCryptoUsd,
       totalEquityUsd,
       smallAccountMode,
