@@ -24,6 +24,7 @@ export async function evaluateAndExecute(signal, snapshot, priceMap, options = {
   const { productId, entryPrice, tpPrice, slPrice } = signal;
   const cooldownAfterStopMs = Number(signal?.indicators?.cooldownAfterStopMs);
   const quoteSizeOverride = Number(options?.quoteSizeOverride);
+  const manualOverride = Boolean(options?.executionContext?.manualOverride);
 
   // ── 1. Portfolio value for sizing ─────────────────────────────────────────
   let balances, portfolioUSD;
@@ -88,7 +89,7 @@ export async function evaluateAndExecute(signal, snapshot, priceMap, options = {
   }
 
   // ── 5. ASSIST mode: log signal, don't auto-submit ────────────────────────
-  if (config.authority === 'ASSIST') {
+  if (config.authority === 'ASSIST' && !manualOverride) {
     log.info('ASSIST_MODE_SIGNAL', {
       productId, signal, preview,
       note: 'Set AUTHORITY=AUTO and DRY_RUN=false to enable autonomous execution.',

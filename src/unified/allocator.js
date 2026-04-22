@@ -38,10 +38,31 @@ export async function allocateSignal({ signal, positions, balancesByBroker, dail
     .reduce((sum, position) => sum + toExposureUsd(position), 0);
 
   const coinbaseUsd = Number(balancesByBroker.coinbase?.USD?.available || 0);
+  const btcHeld = Number(balancesByBroker.coinbase?.BTC?.total || 0);
+  const ethHeld = Number(balancesByBroker.coinbase?.ETH?.total || 0);
+  const btcPrice = Number(executionContext.priceMap?.['BTC-USD'] || 0);
+  const ethPrice = Number(executionContext.priceMap?.['ETH-USD'] || 0);
+  const btcUsd = Number.isFinite(btcPrice) && btcPrice > 0 ? btcHeld * btcPrice : 0;
+  const ethUsd = Number.isFinite(ethPrice) && ethPrice > 0 ? ethHeld * ethPrice : 0;
+  const rotatableCryptoUsd = btcUsd + ethUsd;
   const stockUsd = Number(balancesByBroker.stocks?.USD?.available || 0);
   const marketCash = signal.market === 'crypto' ? coinbaseUsd : stockUsd;
   const marketExposureUsd = signal.market === 'crypto' ? cryptoExposure : equityExposure;
   const marketPortfolioUsd = marketCash + marketExposureUsd;
+  if (signal.market === 'crypto') {
+    log.info('CAPITAL_STATE_READ', {
+      market: signal.market,
+      symbol: signal.symbol,
+      usdCash: coinbaseUsd,
+      btcHeld,
+      ethHeld,
+      btcUsd,
+      ethUsd,
+      rotatableCryptoUsd,
+      marketExposureUsd,
+      marketPortfolioUsd,
+    });
+  }
   if (marketPortfolioUsd <= 0) {
     const decision = { approved: false, reason: 'NO_ALLOCATABLE_CAPITAL' };
     log.info('CAPITAL_ALLOCATION_DECISION', { market: signal.market, symbol: signal.symbol, ...decision, marketCash, marketExposureUsd });
@@ -105,6 +126,14 @@ export async function allocateSignal({ signal, positions, balancesByBroker, dail
       availableCash,
       note: 'NO_USD_FOR_ENTRY_PREFERS_EXISTING_CRYPTO_MANAGEMENT',
     });
+    if (signal.market === 'crypto' && rotatableCryptoUsd > 0) {
+      log.info('ROTATION_DECISION', {
+        market: signal.market,
+        symbol: signal.symbol,
+        reason: 'NO_USD_AVAILABLE_USE_BTC_ETH_ROTATION',
+        rotatableCryptoUsd,
+      });
+    }
     return decision;
   }
 
@@ -148,7 +177,7 @@ export async function allocateSignal({ signal, positions, balancesByBroker, dail
   }
 
   const decision = { approved: true, reason: 'ALLOCATOR_APPROVED', notionalUsd };
-  log.info('CAPITAL_ALLOCATION_DECISION', {
+  log.info('ALLOCATION_DECISION', {
     market: signal.market,
     symbol: signal.symbol,
     ...decision,
@@ -161,5 +190,15 @@ export async function allocateSignal({ signal, positions, balancesByBroker, dail
     forceTrade,
     forceMinNotional,
   });
+  if (signal.market === 'crypto') {
+    log.info('REBALANCE_DECISION', {
+      symbol: signal.symbol,
+      usdCash: coinbaseUsd,
+      btcUsd,
+      ethUsd,
+      desiredNotionalUsd: notionalUsd,
+      confidence,
+    });
+  }
   return decision;
 }
