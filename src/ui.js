@@ -1741,11 +1741,44 @@ export function getDashboardHTML() {
     }).join('');
     document.getElementById('asset-orderbook-rows').innerHTML = (asksRows + bidsRows) || '<div class="note">No live open orders for this symbol.</div>';
 
-    const trades = state.fills.filter(function(f) { return f.symbol === symbol; }).slice(0, 12).map(function(f) {
-      const side = String(f.side || '').toUpperCase();
-      return '<tr><td class="' + (side === 'BUY' ? 'up' : 'down') + '">' + side + '</td><td class="num">' + usd(f.price) + '</td><td class="num">' + fmt(Number(f.filledSize || f.size || f.qty || 0), 6) + '</td><td>' + age(f.filledAt || f.ts) + '</td></tr>';
-    }).join('');
-    document.getElementById('asset-trade-history-rows').innerHTML = trades || '<tr><td colspan="4" class="neutral">No recent trades</td></tr>';
+    const tradeHistoryRows = document.getElementById('asset-trade-history-rows');
+    const trades = state.fills.filter(function(f) { return f.symbol === symbol; }).slice(0, 12);
+    tradeHistoryRows.textContent = '';
+    if (trades.length) {
+      trades.forEach(function(f) {
+        const side = String(f.side || '').toUpperCase();
+        const row = document.createElement('tr');
+
+        const sideCell = document.createElement('td');
+        sideCell.className = side === 'BUY' ? 'up' : 'down';
+        sideCell.textContent = side;
+
+        const priceCell = document.createElement('td');
+        priceCell.className = 'num';
+        priceCell.textContent = usd(f.price);
+
+        const sizeCell = document.createElement('td');
+        sizeCell.className = 'num';
+        sizeCell.textContent = fmt(Number(f.filledSize || f.size || f.qty || 0), 6);
+
+        const ageCell = document.createElement('td');
+        ageCell.textContent = age(f.filledAt || f.ts);
+
+        row.appendChild(sideCell);
+        row.appendChild(priceCell);
+        row.appendChild(sizeCell);
+        row.appendChild(ageCell);
+        tradeHistoryRows.appendChild(row);
+      });
+    } else {
+      const row = document.createElement('tr');
+      const cell = document.createElement('td');
+      cell.colSpan = 4;
+      cell.className = 'neutral';
+      cell.textContent = 'No recent trades';
+      row.appendChild(cell);
+      tradeHistoryRows.appendChild(row);
+    }
     document.getElementById('asset-book-market').textContent = CRYPTO_SET.has(symbol) ? 'Crypto · Real' : 'Equities · Paper';
     document.getElementById('asset-book-open-orders').textContent = String(symbolOrders.length);
     if (asks.length && bids.length) {
