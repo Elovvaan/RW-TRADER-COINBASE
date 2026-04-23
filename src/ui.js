@@ -115,6 +115,29 @@ export function getDashboardHTML() {
   }
   .tab-panel.active { display:block; }
 
+  .sub-tabs {
+    display:flex;
+    gap:8px;
+    flex-wrap:wrap;
+    margin:10px 0;
+  }
+  .sub-tab-btn {
+    border:1px solid var(--line);
+    background:rgba(255,255,255,.02);
+    color:var(--muted);
+    border-radius:8px;
+    padding:7px 10px;
+    cursor:pointer;
+    font-size:12px;
+  }
+  .sub-tab-btn.active {
+    border-color:var(--accent);
+    color:var(--text);
+    background:rgba(102,179,255,.12);
+  }
+  .sub-panel { display:none; }
+  .sub-panel.active { display:block; }
+
   .panel-scroll {
     padding:10px;
     height:100%;
@@ -322,6 +345,7 @@ export function getDashboardHTML() {
   <section class="card tabs" id="main-tabs">
     <a class="tab-btn active route-link" data-route="home" href="/home">Home</a>
     <a class="tab-btn route-link" data-route="markets" href="/markets">Markets</a>
+    <a class="tab-btn route-link" data-route="asset" href="/asset/BTC-USD">Asset</a>
     <a class="tab-btn route-link" data-route="chart" href="/chart">Chart</a>
     <a class="tab-btn route-link" data-route="positions" href="/positions">Positions</a>
     <a class="tab-btn route-link" data-route="control" href="/control">Control</a>
@@ -410,7 +434,7 @@ export function getDashboardHTML() {
             <div class="kv"><span class="k">Last price</span><span class="mono" id="market-active-price">—</span></div>
             <div class="kv"><span class="k">Signal</span><span id="market-active-signal">—</span></div>
             <div class="kv"><span class="k">Position state</span><span id="market-active-pos">Flat</span></div>
-            <div class="note" style="margin-top:8px;">Tap any symbol below to open its chart in the Chart tab.</div>
+            <div class="note" style="margin-top:8px;">Tap any symbol below to open its dedicated asset trading mode screen.</div>
           </div>
         </div>
 
@@ -484,6 +508,124 @@ export function getDashboardHTML() {
               <button id="manual-close" class="full">Close Position</button>
             </div>
             <div id="manual-note" class="note" style="margin-top:8px;">Manual actions are secondary; autonomous strategy remains primary.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="tab-panel" id="tab-asset">
+      <div class="panel-scroll">
+        <div class="panel">
+          <p class="section-title">Asset Header</p>
+          <div class="grid three-col">
+            <div class="kv"><span class="k">Symbol</span><span id="asset-header-symbol">BTC-USD</span></div>
+            <div class="kv"><span class="k">Live price</span><span class="mono" id="asset-header-price">—</span></div>
+            <div class="kv"><span class="k">24h move</span><span class="mono" id="asset-header-move">—</span></div>
+            <div class="kv"><span class="k">Position state</span><span id="asset-header-position">Flat</span></div>
+            <div class="kv"><span class="k">Current signal</span><span id="asset-header-signal">—</span></div>
+            <div class="kv"><span class="k">Holdings / allocation</span><span id="asset-header-holdings">—</span></div>
+          </div>
+        </div>
+
+        <div class="sub-tabs" id="asset-sub-tabs">
+          <button class="sub-tab-btn active" data-asset-tab="spot">Spot</button>
+          <button class="sub-tab-btn" data-asset-tab="buy">Buy</button>
+          <button class="sub-tab-btn" data-asset-tab="sell">Sell</button>
+          <button class="sub-tab-btn" data-asset-tab="day-trade">Day Trade</button>
+          <button class="sub-tab-btn" data-asset-tab="history">History</button>
+          <button class="sub-tab-btn" data-asset-tab="info">Info</button>
+        </div>
+
+        <div class="panel sub-panel active" id="asset-panel-spot">
+          <p class="section-title">Spot</p>
+          <div class="grid two-col">
+            <div>
+              <svg id="asset-spot-chart" viewBox="0 0 1200 340" preserveAspectRatio="none" aria-label="Asset spot chart"><title>Asset spot chart</title></svg>
+            </div>
+            <div>
+              <div class="kv"><span class="k">Signal</span><span id="asset-spot-signal">—</span></div>
+              <div class="kv"><span class="k">Confidence</span><span id="asset-spot-confidence">—</span></div>
+              <div class="kv"><span class="k">Regime</span><span id="asset-spot-regime">—</span></div>
+              <div class="kv"><span class="k">Entry / TP / SL</span><span id="asset-spot-risk">—</span></div>
+              <div class="kv"><span class="k">Current position</span><span id="asset-spot-position">Flat</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel sub-panel" id="asset-panel-buy">
+          <p class="section-title">Buy</p>
+          <div class="kv"><span class="k">Available USD</span><span id="asset-buy-usd">—</span></div>
+          <label class="subtle">Buy amount (USD)
+            <input id="asset-buy-size-usd" type="number" min="1" step="1" value="50" style="width:100%;margin-top:4px;background:#12203a;border:1px solid #36517d;color:var(--text);border-radius:7px;padding:6px 8px;font-size:12px;">
+          </label>
+          <div class="kv"><span class="k">Estimated quantity</span><span id="asset-buy-est-qty">—</span></div>
+          <button id="asset-buy-confirm" class="btn-safe" style="margin-top:10px;">Confirm Buy</button>
+          <div id="asset-buy-note" class="note" style="margin-top:8px;">Manual buy is optional override; autonomous mode remains primary.</div>
+        </div>
+
+        <div class="panel sub-panel" id="asset-panel-sell">
+          <p class="section-title">Sell</p>
+          <div class="kv"><span class="k">Available asset quantity</span><span id="asset-sell-qty-available">—</span></div>
+          <label class="subtle">Sell amount (USD notionals)
+            <input id="asset-sell-size-usd" type="number" min="1" step="1" value="50" style="width:100%;margin-top:4px;background:#12203a;border:1px solid #36517d;color:var(--text);border-radius:7px;padding:6px 8px;font-size:12px;">
+          </label>
+          <div style="display:flex;gap:8px;margin-top:8px;">
+            <button id="asset-sell-partial">Partial</button>
+            <button id="asset-sell-full">Full</button>
+          </div>
+          <div class="kv"><span class="k">Estimated proceeds</span><span id="asset-sell-est-proceeds">—</span></div>
+          <button id="asset-sell-confirm" class="btn-danger" style="margin-top:10px;">Confirm Sell</button>
+          <div id="asset-sell-note" class="note" style="margin-top:8px;">Manual sell is optional override; autonomous mode remains primary.</div>
+        </div>
+
+        <div class="panel sub-panel" id="asset-panel-day-trade">
+          <p class="section-title">Day Trade</p>
+          <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
+            <button class="asset-dt-tf active" data-tf="1m">1m</button>
+            <button class="asset-dt-tf" data-tf="5m">5m</button>
+            <button class="asset-dt-tf" data-tf="15m">15m</button>
+            <span class="note">Intraday controls</span>
+          </div>
+          <svg id="asset-day-chart" viewBox="0 0 1200 300" preserveAspectRatio="none" aria-label="Asset day chart"><title>Asset day chart</title></svg>
+          <div class="grid two-col" style="margin-top:10px;">
+            <div>
+              <div class="kv"><span class="k">Day-trade signal</span><span id="asset-day-signal">—</span></div>
+              <div class="kv"><span class="k">Intraday position</span><span id="asset-day-position">Flat</span></div>
+            </div>
+            <div>
+              <label class="subtle">Manual override size (USD)
+                <input id="asset-day-size-usd" type="number" min="1" step="1" value="25" style="width:100%;margin-top:4px;background:#12203a;border:1px solid #36517d;color:var(--text);border-radius:7px;padding:6px 8px;font-size:12px;">
+              </label>
+              <div style="display:flex;gap:8px;margin-top:8px;">
+                <button id="asset-day-buy" class="btn-safe">Override Buy</button>
+                <button id="asset-day-sell" class="btn-danger">Override Sell</button>
+              </div>
+              <div id="asset-day-note" class="note" style="margin-top:8px;">Day-trade manual override is optional and does not disable autonomy.</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel sub-panel" id="asset-panel-history">
+          <p class="section-title">History</p>
+          <table class="grid-table">
+            <thead><tr><th>Entry</th><th>Exit</th><th class="num">PnL</th><th>Timestamps</th></tr></thead>
+            <tbody id="asset-history-body"></tbody>
+          </table>
+        </div>
+
+        <div class="panel sub-panel" id="asset-panel-info">
+          <p class="section-title">Info</p>
+          <div class="grid two-col">
+            <div>
+              <div class="kv"><span class="k">Holdings</span><span id="asset-info-holdings">—</span></div>
+              <div class="kv"><span class="k">Allocation %</span><span id="asset-info-allocation">—</span></div>
+              <div class="kv"><span class="k">Avg entry</span><span id="asset-info-entry">—</span></div>
+            </div>
+            <div>
+              <div class="kv"><span class="k">Market type</span><span id="asset-info-market">—</span></div>
+              <div class="kv"><span class="k">Open position size</span><span id="asset-info-size">—</span></div>
+              <div class="kv"><span class="k">Signal confidence</span><span id="asset-info-confidence">—</span></div>
+            </div>
           </div>
         </div>
       </div>
@@ -579,6 +721,7 @@ export function getDashboardHTML() {
   const ROUTE_BY_TAB = {
     home: '/home',
     markets: '/markets',
+    asset: '/asset/BTC-USD',
     chart: '/chart',
     positions: '/positions',
     control: '/control',
@@ -591,6 +734,8 @@ export function getDashboardHTML() {
     '/positions': 'positions',
     '/control': 'control',
   };
+  const ASSET_ROUTE_PREFIX = '/asset/';
+  const ASSET_TABS = ['spot', 'buy', 'sell', 'day-trade', 'history', 'info'];
   const EMPTY_VALUE = '—';
   const DEFAULT_REFRESH_INTERVAL_MS = 5000;
   const MAX_LOG_ENTRIES = 70;
@@ -616,6 +761,7 @@ export function getDashboardHTML() {
 
   const state = {
     activeTab: 'home',
+    assetTab: 'spot',
     strategyMode: 'SWING',
     selectedSymbol: 'BTC-USD',
     timeframe: '1m',
@@ -794,7 +940,24 @@ export function getDashboardHTML() {
     return out.slice(-MAX_DISPLAY_CANDLES);
   }
 
-  function setActiveTab(tab, pushHistory) {
+  function routeForTab(tab) {
+    if (tab === 'asset') return ASSET_ROUTE_PREFIX + encodeURIComponent(state.selectedSymbol || 'BTC-USD');
+    return ROUTE_BY_TAB[tab] || '/home';
+  }
+
+  function tabForPath(pathname) {
+    if (pathname.startsWith(ASSET_ROUTE_PREFIX)) return 'asset';
+    return TAB_BY_ROUTE[pathname] || 'home';
+  }
+
+  function symbolFromAssetPath(pathname) {
+    if (!pathname.startsWith(ASSET_ROUTE_PREFIX)) return null;
+    const raw = decodeURIComponent(pathname.slice(ASSET_ROUTE_PREFIX.length) || '').trim();
+    if (!raw) return null;
+    return raw.toUpperCase();
+  }
+
+  function setActiveTab(tab, pushHistory, explicitPath) {
     const target = ROUTE_BY_TAB[tab] ? tab : 'home';
     state.activeTab = target;
     Array.from(document.querySelectorAll('.route-link')).forEach(function(btn) {
@@ -804,21 +967,22 @@ export function getDashboardHTML() {
       panel.classList.toggle('active', panel.id === 'tab-' + target);
     });
     if (pushHistory) {
-      const nextPath = ROUTE_BY_TAB[target] || '/home';
+      const nextPath = explicitPath || routeForTab(target);
       if (window.location.pathname !== nextPath) {
         window.history.pushState({ tab: target }, '', nextPath);
       }
     }
   }
 
-  function selectSymbol(symbol, forceChartTab) {
+  function selectSymbol(symbol, openAssetRoute) {
     state.selectedSymbol = symbol;
     const symbolSelect = document.getElementById('chart-symbol');
     if (symbolSelect) symbolSelect.value = symbol;
     document.getElementById('top-symbol').textContent = symbol;
     renderMarketsTab();
     renderChartTab();
-    if (forceChartTab) setActiveTab('chart');
+    renderAssetTab();
+    if (openAssetRoute) setActiveTab('asset', true, ASSET_ROUTE_PREFIX + encodeURIComponent(symbol));
   }
 
   function updateWatchModel() {
@@ -884,6 +1048,7 @@ export function getDashboardHTML() {
     document.getElementById('top-authority').textContent = control.authority || 'ASSIST';
     document.getElementById('top-kill').textContent = control.globalKillSwitch ? 'ARMED' : 'CLEAR';
     document.getElementById('top-mode').textContent = control.strategyMode || state.strategyMode || 'SWING';
+    document.getElementById('top-symbol').textContent = state.selectedSymbol;
     document.getElementById('top-updated').textContent = new Date().toLocaleTimeString();
 
     document.getElementById('dot-crypto').className = 'dot ' + (control.cryptoAutoEnabled ? 'ok' : 'bad');
@@ -898,6 +1063,10 @@ export function getDashboardHTML() {
     document.getElementById('manual-buy').disabled = !manualAllowed;
     document.getElementById('manual-sell').disabled = !manualAllowed;
     document.getElementById('manual-close').disabled = !manualAllowed;
+    document.getElementById('asset-buy-confirm').disabled = !manualAllowed;
+    document.getElementById('asset-sell-confirm').disabled = !manualAllowed;
+    document.getElementById('asset-day-buy').disabled = !manualAllowed;
+    document.getElementById('asset-day-sell').disabled = !manualAllowed;
     document.getElementById('manual-note').textContent = manualAllowed
       ? 'Manual override is available in ' + authority + ' mode; autonomous routing remains primary.'
       : 'Authority OFF blocks manual override.';
@@ -1199,6 +1368,119 @@ export function getDashboardHTML() {
       overlays.join('');
   }
 
+  function drawSimpleChart(svgId, symbol, timeframe, height) {
+    const svg = document.getElementById(svgId);
+    if (!svg) return;
+    const candles = aggregateCandles(symbol, timeframe);
+    if (!candles.length) {
+      svg.innerHTML =
+        '<title>Chart</title>' +
+        '<rect x="0" y="0" width="' + CHART_WIDTH + '" height="' + height + '" fill="#0b1423"></rect>' +
+        '<text x="20" y="34" fill="#8298be" font-size="16">Waiting for market data…</text>';
+      return;
+    }
+    const recent = candles.slice(-80);
+    let minP = Infinity;
+    let maxP = -Infinity;
+    recent.forEach(function(c) {
+      minP = Math.min(minP, c.l);
+      maxP = Math.max(maxP, c.h);
+    });
+    const pad = (maxP - minP || 1) * 0.12;
+    minP -= pad;
+    maxP += pad;
+    const W = CHART_WIDTH;
+    const H = height;
+    const px = 38;
+    const py = 18;
+    const cw = (W - px * 2) / recent.length;
+    function x(i) { return px + i * cw + cw / 2; }
+    function y(p) { return py + ((maxP - p) / (maxP - minP || 1)) * (H - py * 2); }
+    const bars = recent.map(function(c, i) {
+      const up = c.c >= c.o;
+      const color = up ? CHART_COLORS.up : CHART_COLORS.down;
+      const wick = '<line x1="' + x(i) + '" y1="' + y(c.h) + '" x2="' + x(i) + '" y2="' + y(c.l) + '" stroke="' + color + '" stroke-width="1"/>';
+      const bodyY = Math.min(y(c.o), y(c.c));
+      const bodyH = Math.max(1, Math.abs(y(c.o) - y(c.c)));
+      const body = '<rect x="' + (x(i) - Math.max(1.2, cw * 0.3)) + '" y="' + bodyY + '" width="' + Math.max(2, cw * 0.6) + '" height="' + bodyH + '" fill="' + color + '" opacity=".9"/>';
+      return wick + body;
+    }).join('');
+    svg.innerHTML =
+      '<title>Chart for ' + symbol + '</title>' +
+      '<rect x="0" y="0" width="' + W + '" height="' + H + '" fill="#0b1423"></rect>' +
+      bars;
+  }
+
+  function renderAssetTab() {
+    const symbol = state.selectedSymbol;
+    const sig = symbolSignal(symbol);
+    const pos = symbolPosition(symbol);
+    const decision = symbolDecision(symbol);
+    const watch = state.watch.get(symbol) || {};
+    const cryptoBalances = ((state.dashboard || {}).realCrypto || {}).balances || {};
+    const stocks = ((state.dashboard || {}).simulatedStocks) || {};
+    const price = getSymbolPrice(symbol);
+
+    document.getElementById('asset-header-symbol').textContent = symbol;
+    document.getElementById('asset-header-price').textContent = Number.isFinite(price) ? usd(price) : EMPTY_VALUE;
+    document.getElementById('asset-header-move').textContent = formatPercent(watch.movePct || 0);
+    document.getElementById('asset-header-move').className = 'mono ' + clsSigned(watch.movePct || 0);
+    document.getElementById('asset-header-position').textContent = pos ? ('OPEN ' + pos.side + ' · ' + usd(pos.unrealizedPnL || 0)) : 'Flat';
+    document.getElementById('asset-header-signal').innerHTML = signalOrSkipBadge(symbol, sig ? sig.side : 'WAIT');
+
+    const baseAsset = symbol.split('-')[0];
+    const baseHolding = Number(cryptoBalances[baseAsset]?.total || 0);
+    const usdAvailable = Number(cryptoBalances.USD?.available || 0);
+    const holdingUsd = Number.isFinite(price) ? baseHolding * price : 0;
+    const totalRef = usdAvailable + holdingUsd + Number(stocks.paperCashUsd || 0) + Number(stocks.paperEquityValueUsd || 0);
+    const allocPct = totalRef > 0 ? ((holdingUsd / totalRef) * 100) : 0;
+    document.getElementById('asset-header-holdings').textContent = fmt(baseHolding, 6) + ' ' + baseAsset + ' · ' + fmt(allocPct, 2) + '%';
+
+    document.getElementById('asset-spot-signal').innerHTML = sideBadge(sig ? sig.side : 'WAIT');
+    document.getElementById('asset-spot-confidence').textContent = Math.round(Number(sig?.confidence || 0) * 100) + '%';
+    document.getElementById('asset-spot-regime').textContent = sig?.indicators?.regime || decision?.regime || EMPTY_VALUE;
+    document.getElementById('asset-spot-risk').textContent = formatSignalLevel(sig, 'entry') + ' / ' + formatSignalLevel(sig, 'tp') + ' / ' + formatSignalLevel(sig, 'sl');
+    document.getElementById('asset-spot-position').textContent = pos ? (pos.side + ' · entry ' + usd(pos.entry) + ' · pnl ' + usd(pos.unrealizedPnL || 0)) : 'Flat';
+    drawSimpleChart('asset-spot-chart', symbol, state.timeframe, 340);
+
+    document.getElementById('asset-buy-usd').textContent = usd(usdAvailable);
+    const buyUsd = Number(document.getElementById('asset-buy-size-usd').value || 0);
+    const estQty = (Number.isFinite(price) && price > 0) ? buyUsd / price : NaN;
+    document.getElementById('asset-buy-est-qty').textContent = Number.isFinite(estQty) ? (fmt(estQty, 6) + ' ' + baseAsset) : EMPTY_VALUE;
+
+    const sellUsd = Number(document.getElementById('asset-sell-size-usd').value || 0);
+    document.getElementById('asset-sell-qty-available').textContent = fmt(baseHolding, 6) + ' ' + baseAsset;
+    const estProceeds = Number.isFinite(price) && price > 0
+      ? Math.min(baseHolding, sellUsd / price) * price
+      : NaN;
+    document.getElementById('asset-sell-est-proceeds').textContent = Number.isFinite(estProceeds) ? usd(estProceeds) : EMPTY_VALUE;
+
+    document.getElementById('asset-day-signal').innerHTML = signalOrSkipBadge(symbol, sig ? sig.side : 'WAIT');
+    document.getElementById('asset-day-position').textContent = pos ? ('OPEN · ' + pos.side + ' · ' + usd(pos.unrealizedPnL || 0)) : 'Flat';
+    drawSimpleChart('asset-day-chart', symbol, state.timeframe, 300);
+
+    const historyRows = state.fills.filter(function(f) { return f.symbol === symbol; }).slice(0, 12).map(function(f) {
+      const side = String(f.side || '').toUpperCase();
+      const entryText = side === 'BUY' ? usd(f.price) : EMPTY_VALUE;
+      const exitText = side === 'SELL' ? usd(f.price) : EMPTY_VALUE;
+      const pnl = Number(f.pnlUsd || f.realizedPnlUsd || 0);
+      return '<tr>' +
+        '<td>' + entryText + '</td>' +
+        '<td>' + exitText + '</td>' +
+        '<td class="num ' + clsSigned(pnl) + '">' + usd(pnl) + '</td>' +
+        '<td>' + age(f.filledAt || f.ts) + '</td>' +
+      '</tr>';
+    }).join('');
+    document.getElementById('asset-history-body').innerHTML = historyRows || '<tr><td colspan="4" class="neutral">No fills for this symbol yet</td></tr>';
+
+    document.getElementById('asset-info-holdings').textContent = fmt(baseHolding, 6) + ' ' + baseAsset;
+    document.getElementById('asset-info-allocation').textContent = fmt(allocPct, 2) + '%';
+    document.getElementById('asset-info-entry').textContent = pos ? usd(pos.entry) : EMPTY_VALUE;
+    document.getElementById('asset-info-market').textContent = CRYPTO_SET.has(symbol) ? 'Crypto (real)' : 'Equities (paper)';
+    document.getElementById('asset-info-size').textContent = pos ? fmt(pos.size, 6) : '0';
+    document.getElementById('asset-info-confidence').textContent = Math.round(Number(sig?.confidence || 0) * 100) + '%';
+  }
+
   function renderPositionsTab() {
     const cryptoRows = state.positions.filter(function(p) { return CRYPTO_SET.has(p.symbol) || p.market === 'crypto'; }).map(function(p) {
       return '<tr class="' + (p.symbol === state.selectedSymbol ? 'active-row' : '') + '">' +
@@ -1257,10 +1539,13 @@ export function getDashboardHTML() {
     }
   }
 
-  async function submitManualOverride(side) {
+  async function submitManualOverride(side, options) {
     const symbol = state.selectedSymbol;
+    const opts = options || {};
     const sizeInput = document.getElementById('manual-size-usd');
-    const notionalUsd = Number(sizeInput && sizeInput.value);
+    const fallbackNotional = Number(sizeInput && sizeInput.value);
+    const notionalUsd = Number.isFinite(Number(opts.notionalUsd)) ? Number(opts.notionalUsd) : fallbackNotional;
+    const noteId = opts.noteId || 'manual-note';
     logLine('MANUAL_OVERRIDE_CLICKED ' + side + ' ' + symbol + ' size=' + (Number.isFinite(notionalUsd) ? notionalUsd : 'n/a'));
     try {
       const res = await fetch('/manual/override', {
@@ -1271,17 +1556,20 @@ export function getDashboardHTML() {
       const payload = await res.json();
       if (!res.ok || payload.ok === false) {
         const reason = payload.reason || payload.message || ('HTTP_' + res.status);
-        document.getElementById('manual-note').textContent = 'Manual override rejected: ' + reason;
+        const noteEl = document.getElementById(noteId);
+        if (noteEl) noteEl.textContent = 'Manual override rejected: ' + reason;
         logLine('MANUAL_OVERRIDE_REJECTED ' + side + ' ' + symbol + ' reason=' + reason);
         return;
       }
-      document.getElementById('manual-note').textContent = 'Manual override submitted: ' + side + ' ' + symbol;
+      const noteEl = document.getElementById(noteId);
+      if (noteEl) noteEl.textContent = 'Manual override submitted: ' + side + ' ' + symbol;
       logLine('MANUAL_OVERRIDE_SUBMITTED ' + side + ' ' + symbol);
       logLine('MANUAL_OVERRIDE_FILLED ' + side + ' ' + symbol);
       await load();
     } catch (err) {
       const reason = err && err.message ? err.message : String(err || 'unknown');
-      document.getElementById('manual-note').textContent = 'Manual override rejected: ' + reason;
+      const noteEl = document.getElementById(noteId);
+      if (noteEl) noteEl.textContent = 'Manual override rejected: ' + reason;
       logLine('MANUAL_OVERRIDE_REJECTED ' + side + ' ' + symbol + ' reason=' + reason);
     }
   }
@@ -1294,12 +1582,18 @@ export function getDashboardHTML() {
     Array.from(document.querySelectorAll('.route-link')).forEach(function(btn) {
       btn.addEventListener('click', function(e) {
         e.preventDefault();
-        setActiveTab(btn.getAttribute('data-route'), true);
+        const route = btn.getAttribute('data-route');
+        setActiveTab(route, true, route === 'asset' ? routeForTab('asset') : undefined);
       });
     });
     window.addEventListener('popstate', function() {
-      const tab = TAB_BY_ROUTE[window.location.pathname] || 'home';
+      const symbol = symbolFromAssetPath(window.location.pathname);
+      if (symbol) state.selectedSymbol = symbol;
+      const symbolSelect = document.getElementById('chart-symbol');
+      if (symbolSelect) symbolSelect.value = state.selectedSymbol;
+      const tab = tabForPath(window.location.pathname);
       setActiveTab(tab, false);
+      renderAll();
     });
   }
 
@@ -1377,6 +1671,65 @@ export function getDashboardHTML() {
       renderControlTab();
       renderChartTab();
     });
+
+    Array.from(document.querySelectorAll('.sub-tab-btn')).forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        const next = btn.getAttribute('data-asset-tab');
+        state.assetTab = ASSET_TABS.includes(next) ? next : 'spot';
+        Array.from(document.querySelectorAll('.sub-tab-btn')).forEach(function(b) {
+          b.classList.toggle('active', b.getAttribute('data-asset-tab') === state.assetTab);
+        });
+        ASSET_TABS.forEach(function(tabName) {
+          const panel = document.getElementById('asset-panel-' + tabName);
+          if (panel) panel.classList.toggle('active', tabName === state.assetTab);
+        });
+      });
+    });
+
+    document.getElementById('asset-buy-size-usd').addEventListener('input', renderAssetTab);
+    document.getElementById('asset-sell-size-usd').addEventListener('input', renderAssetTab);
+    document.getElementById('asset-buy-confirm').addEventListener('click', function() {
+      const notionalUsd = Number(document.getElementById('asset-buy-size-usd').value || 0);
+      submitManualOverride('BUY', { notionalUsd: notionalUsd, noteId: 'asset-buy-note' });
+    });
+    document.getElementById('asset-sell-confirm').addEventListener('click', function() {
+      const notionalUsd = Number(document.getElementById('asset-sell-size-usd').value || 0);
+      submitManualOverride('SELL', { notionalUsd: notionalUsd, noteId: 'asset-sell-note' });
+    });
+    document.getElementById('asset-day-buy').addEventListener('click', function() {
+      const notionalUsd = Number(document.getElementById('asset-day-size-usd').value || 0);
+      submitManualOverride('BUY', { notionalUsd: notionalUsd, noteId: 'asset-day-note' });
+    });
+    document.getElementById('asset-day-sell').addEventListener('click', function() {
+      const notionalUsd = Number(document.getElementById('asset-day-size-usd').value || 0);
+      submitManualOverride('SELL', { notionalUsd: notionalUsd, noteId: 'asset-day-note' });
+    });
+    document.getElementById('asset-sell-partial').addEventListener('click', function() {
+      document.getElementById('asset-sell-note').textContent = 'Partial sell selected. Confirm to submit optional override.';
+    });
+    document.getElementById('asset-sell-full').addEventListener('click', function() {
+      const symbol = state.selectedSymbol;
+      const baseAsset = symbol.split('-')[0];
+      const cryptoBalances = ((state.dashboard || {}).realCrypto || {}).balances || {};
+      const qty = Number(cryptoBalances[baseAsset]?.total || 0);
+      const px = getSymbolPrice(symbol);
+      const fullNotional = Number.isFinite(px) ? qty * px : 0;
+      document.getElementById('asset-sell-size-usd').value = Math.max(0, Math.round(fullNotional));
+      document.getElementById('asset-sell-note').textContent = 'Full sell estimated. Confirm to submit optional override.';
+      renderAssetTab();
+    });
+    Array.from(document.querySelectorAll('.asset-dt-tf')).forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        state.timeframe = btn.getAttribute('data-tf') || '1m';
+        document.getElementById('chart-timeframe').value = state.timeframe;
+        document.getElementById('control-timeframe-select').value = state.timeframe;
+        Array.from(document.querySelectorAll('.asset-dt-tf')).forEach(function(b) {
+          b.classList.toggle('active', b.getAttribute('data-tf') === state.timeframe);
+        });
+        renderChartTab();
+        renderAssetTab();
+      });
+    });
   }
 
   function renderAll() {
@@ -1384,6 +1737,7 @@ export function getDashboardHTML() {
     renderHomeTab();
     renderMarketsTab();
     renderChartTab();
+    renderAssetTab();
     renderPositionsTab();
     renderControlTab();
   }
@@ -1440,9 +1794,11 @@ export function getDashboardHTML() {
     }
   }
 
+  const initialSymbol = symbolFromAssetPath(window.location.pathname);
+  if (initialSymbol) state.selectedSymbol = initialSymbol;
   bindTabs();
   bindControls();
-  setActiveTab(TAB_BY_ROUTE[window.location.pathname] || 'home', false);
+  setActiveTab(tabForPath(window.location.pathname), false);
   load();
   setInterval(function() {
     const clock = document.getElementById('top-clock');

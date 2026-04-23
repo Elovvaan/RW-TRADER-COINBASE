@@ -509,6 +509,13 @@ export function createApiServer() {
         log.error('HTTP_ERROR', { path: url.pathname, error: err.message });
         json(res, 500, { error: 'Internal server error' });
       }
+    } else if (req.method === 'GET' && url.pathname.startsWith('/asset/')) {
+      try {
+        await serveDashboardPage(res);
+      } catch (err) {
+        log.error('HTTP_ERROR', { path: url.pathname, error: err.message });
+        json(res, 500, { error: 'Internal server error' });
+      }
     } else {
       notFound(res);
     }
