@@ -1414,9 +1414,11 @@ export function getDashboardHTML() {
       return wick + body;
     }).join('');
     svg.innerHTML =
-      '<title>Chart for ' + symbol + '</title>' +
       '<rect x="0" y="0" width="' + W + '" height="' + H + '" fill="#0b1423"></rect>' +
       bars;
+    const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+    title.textContent = 'Chart for ' + symbol;
+    svg.insertBefore(title, svg.firstChild);
   }
 
   function renderAssetTab() {
