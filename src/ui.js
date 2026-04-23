@@ -952,9 +952,17 @@ export function getDashboardHTML() {
 
   function symbolFromAssetPath(pathname) {
     if (!pathname.startsWith(ASSET_ROUTE_PREFIX)) return null;
-    const raw = decodeURIComponent(pathname.slice(ASSET_ROUTE_PREFIX.length) || '').trim();
+    const encodedSymbol = pathname.slice(ASSET_ROUTE_PREFIX.length) || '';
+    let raw;
+    try {
+      raw = decodeURIComponent(encodedSymbol).trim();
+    } catch (e) {
+      return null;
+    }
     if (!raw) return null;
-    return raw.toUpperCase();
+    const symbol = raw.toUpperCase();
+    if (!/^[A-Z0-9.-]+$/.test(symbol)) return null;
+    return symbol;
   }
 
   function setActiveTab(tab, pushHistory, explicitPath) {
