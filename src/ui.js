@@ -1071,7 +1071,12 @@ export function getDashboardHTML() {
 
   function computeIndicators(candles) {
     const closes = candles.map(function(c) { return Number(c.c || 0); });
-    const volumes = candles.map(function(c) { return Math.abs(Number(c.c || 0) - Number(c.o || 0)); });
+    const volumes = candles.map(function(c) {
+      if (c && c.v != null) return Number(c.v || 0);
+      if (c && c.volume != null) return Number(c.volume || 0);
+      if (c && c.vol != null) return Number(c.vol || 0);
+      return 0;
+    });
     const ma = calculateSMA(closes, 20);
     const ema = calculateEMA(closes, 21);
     const std20 = closes.map(function(_, i) {
