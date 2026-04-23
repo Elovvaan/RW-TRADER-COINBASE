@@ -312,6 +312,50 @@ export function getDashboardHTML() {
     line-height:1.35;
   }
 
+  .asset-trader-layout { display:grid; grid-template-columns:1.9fr 1fr; gap:10px; }
+  .asset-left { display:grid; grid-template-rows:auto auto auto 1fr; gap:8px; min-height:650px; }
+  .asset-header-row {
+    display:flex;
+    justify-content:space-between;
+    gap:8px;
+    align-items:center;
+    flex-wrap:wrap;
+  }
+  .asset-control-row { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+  .asset-btn {
+    border:1px solid var(--line);
+    background:#0f1a2d;
+    color:var(--muted);
+    border-radius:6px;
+    padding:5px 8px;
+    font-size:11px;
+    min-width:40px;
+  }
+  .asset-btn.active {
+    border-color:var(--accent);
+    color:var(--text);
+    background:rgba(102,179,255,.14);
+  }
+  .asset-chart-wrap {
+    position:relative;
+    border:1px solid var(--line-soft);
+    border-radius:8px;
+    overflow:hidden;
+    min-height:420px;
+    background:#0a121f;
+  }
+  #asset-spot-chart { width:100%; height:100%; display:block; }
+  .asset-order-panel { border:1px solid var(--line-soft); border-radius:8px; background:rgba(0,0,0,.2); min-height:180px; padding:8px; }
+  .asset-order-tabs { display:flex; gap:6px; margin-bottom:8px; }
+  .asset-order-tab { flex:1; text-align:center; }
+  .asset-order-book-head, .asset-order-row { display:grid; grid-template-columns:1fr .8fr; gap:8px; font-size:11px; }
+  .asset-order-book-head { color:var(--muted); text-transform:uppercase; letter-spacing:.05em; border-bottom:1px solid var(--line-soft); padding-bottom:6px; margin-bottom:4px; }
+  .asset-order-row { padding:3px 0; font-variant-numeric:tabular-nums; }
+  .asset-order-row.ask { color:#ff9da2; }
+  .asset-order-row.bid { color:#8df0c8; }
+  .asset-right { display:grid; grid-template-rows:auto 1fr auto; gap:10px; }
+  .signal-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+
   @media (max-width: 1200px) {
     .grid.home-main,
     .chart-layout,
@@ -471,6 +515,10 @@ export function getDashboardHTML() {
                   <option value="1m">1m</option>
                   <option value="5m">5m</option>
                   <option value="15m">15m</option>
+                  <option value="1H">1H</option>
+                  <option value="4H">4H</option>
+                  <option value="1D">1D</option>
+                  <option value="1W">1W</option>
                 </select>
               </label>
               <button id="toggle-indicators" class="btn-primary">Indicators ON</button>
@@ -538,16 +586,67 @@ export function getDashboardHTML() {
 
         <div class="panel sub-panel active" id="asset-panel-spot">
           <p class="section-title">Spot</p>
-          <div class="grid two-col">
-            <div>
-              <svg id="asset-spot-chart" viewBox="0 0 1200 340" preserveAspectRatio="none" aria-label="Asset spot chart"><title>Asset spot chart</title></svg>
+          <div class="asset-trader-layout">
+            <div class="asset-left">
+              <div class="asset-header-row">
+                <div class="asset-control-row" id="asset-timeframe-controls">
+                  <button class="asset-btn asset-tf active" data-tf="1m">1m</button>
+                  <button class="asset-btn asset-tf" data-tf="5m">5m</button>
+                  <button class="asset-btn asset-tf" data-tf="15m">15m</button>
+                  <button class="asset-btn asset-tf" data-tf="1H">1H</button>
+                  <button class="asset-btn asset-tf" data-tf="4H">4H</button>
+                  <button class="asset-btn asset-tf" data-tf="1D">1D</button>
+                  <button class="asset-btn asset-tf" data-tf="1W">1W</button>
+                </div>
+                <div class="asset-control-row" id="asset-indicator-controls">
+                  <button class="asset-btn asset-ind active" data-ind="MA">MA</button>
+                  <button class="asset-btn asset-ind active" data-ind="EMA">EMA</button>
+                  <button class="asset-btn asset-ind active" data-ind="BOLL">BOLL</button>
+                  <button class="asset-btn asset-ind active" data-ind="VOL">VOL</button>
+                  <button class="asset-btn asset-ind active" data-ind="MACD">MACD</button>
+                  <button class="asset-btn asset-ind active" data-ind="RSI">RSI</button>
+                </div>
+              </div>
+              <div class="asset-chart-wrap">
+                <svg id="asset-spot-chart" viewBox="0 0 1200 620" preserveAspectRatio="none" aria-label="Asset spot trading chart"><title>Asset spot chart</title></svg>
+              </div>
+              <div class="asset-order-panel">
+                <div class="asset-order-tabs">
+                  <button class="asset-btn asset-order-tab active" data-book-tab="orderbook">Order Book</button>
+                  <button class="asset-btn asset-order-tab" data-book-tab="trades">Trade History</button>
+                  <button class="asset-btn asset-order-tab" data-book-tab="info">Info</button>
+                </div>
+                <div id="asset-book-orderbook">
+                  <div class="asset-order-book-head"><span>Price</span><span class="num">Size</span></div>
+                  <div id="asset-orderbook-rows"></div>
+                </div>
+                <div id="asset-book-trades" style="display:none;">
+                  <table class="grid-table">
+                    <thead><tr><th>Side</th><th class="num">Price</th><th class="num">Size</th><th>Time</th></tr></thead>
+                    <tbody id="asset-trade-history-rows"></tbody>
+                  </table>
+                </div>
+                <div id="asset-book-info" style="display:none;">
+                  <div class="kv"><span class="k">Market</span><span id="asset-book-market">—</span></div>
+                  <div class="kv"><span class="k">Open orders</span><span id="asset-book-open-orders">—</span></div>
+                  <div class="kv"><span class="k">Spread</span><span id="asset-book-spread">—</span></div>
+                </div>
+              </div>
             </div>
-            <div>
-              <div class="kv"><span class="k">Signal</span><span id="asset-spot-signal">—</span></div>
-              <div class="kv"><span class="k">Confidence</span><span id="asset-spot-confidence">—</span></div>
-              <div class="kv"><span class="k">Regime</span><span id="asset-spot-regime">—</span></div>
-              <div class="kv"><span class="k">Entry / TP / SL</span><span id="asset-spot-risk">—</span></div>
-              <div class="kv"><span class="k">Current position</span><span id="asset-spot-position">Flat</span></div>
+            <div class="asset-right">
+              <div class="panel">
+                <p class="section-title">Signal Monitor</p>
+                <div class="signal-grid">
+                  <div class="kv"><span class="k">Signal</span><span id="asset-spot-signal">—</span></div>
+                  <div class="kv"><span class="k">Confidence</span><span id="asset-spot-confidence">—</span></div>
+                  <div class="kv"><span class="k">Live Price</span><span id="asset-spot-live">—</span></div>
+                  <div class="kv"><span class="k">Regime</span><span id="asset-spot-regime">—</span></div>
+                  <div class="kv"><span class="k">Entry</span><span id="asset-spot-entry">—</span></div>
+                  <div class="kv"><span class="k">TP</span><span id="asset-spot-tp">—</span></div>
+                  <div class="kv"><span class="k">SL</span><span id="asset-spot-sl">—</span></div>
+                  <div class="kv"><span class="k">Position</span><span id="asset-spot-position">Flat</span></div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -695,6 +794,10 @@ export function getDashboardHTML() {
                 <option value="1m">1m</option>
                 <option value="5m">5m</option>
                 <option value="15m">15m</option>
+                <option value="1H">1H</option>
+                <option value="4H">4H</option>
+                <option value="1D">1D</option>
+                <option value="1W">1W</option>
               </select>
             </div>
             <div class="kv" style="margin-top:10px;"><span class="k">Indicator visibility</span><span id="indicator-status">ON</span></div>
@@ -743,7 +846,7 @@ export function getDashboardHTML() {
   const MAX_CANDLE_HISTORY = 1200;
   const MAX_DISPLAY_CANDLES = 120;
   const CANDLE_BUCKET_MS = 5000;
-  const CANDLE_STEPS = { '1m': 12, '5m': 60, '15m': 180 };
+  const CANDLE_STEPS = { '1m': 12, '5m': 60, '15m': 180, '1H': 720, '4H': 2880, '1D': 17280, '1W': 120960 };
   const CHART_WIDTH = 1200;
   const CHART_HEIGHT = 560;
   const CHART_COLORS = {
@@ -766,6 +869,8 @@ export function getDashboardHTML() {
     selectedSymbol: 'BTC-USD',
     timeframe: '1m',
     indicatorsOn: true,
+    assetBookTab: 'orderbook',
+    assetIndicatorFlags: { MA: true, EMA: true, BOLL: true, VOL: true, MACD: true, RSI: true },
     refreshIntervalMs: DEFAULT_REFRESH_INTERVAL_MS,
     refreshTimerId: null,
     dashboard: null,
@@ -938,6 +1043,80 @@ export function getDashboardHTML() {
       out.push({ t: validSlice[0].t, o: validSlice[0].o, h: high, l: low, c: validSlice[validSlice.length - 1].c });
     }
     return out.slice(-MAX_DISPLAY_CANDLES);
+  }
+
+  function calculateSMA(values, period) {
+    if (!values.length || period <= 1) return values.map(function(v) { return Number(v); });
+    const out = [];
+    for (let i = 0; i < values.length; i += 1) {
+      if (i < period - 1) { out.push(null); continue; }
+      let sum = 0;
+      for (let j = i - period + 1; j <= i; j += 1) sum += Number(values[j] || 0);
+      out.push(sum / period);
+    }
+    return out;
+  }
+
+  function calculateEMA(values, period) {
+    if (!values.length) return [];
+    const k = 2 / (period + 1);
+    let emaPrev = Number(values[0] || 0);
+    return values.map(function(v, i) {
+      const n = Number(v || 0);
+      if (i === 0) return emaPrev;
+      emaPrev = (n * k) + (emaPrev * (1 - k));
+      return emaPrev;
+    });
+  }
+
+  function computeIndicators(candles) {
+    const closes = candles.map(function(c) { return Number(c.c || 0); });
+    const volumes = candles.map(function(c) { return Math.abs(Number(c.c || 0) - Number(c.o || 0)); });
+    const ma = calculateSMA(closes, 20);
+    const ema = calculateEMA(closes, 21);
+    const std20 = closes.map(function(_, i) {
+      if (i < 19) return null;
+      const window = closes.slice(i - 19, i + 1);
+      const mean = window.reduce(function(acc, n) { return acc + n; }, 0) / window.length;
+      const variance = window.reduce(function(acc, n) { return acc + Math.pow(n - mean, 2); }, 0) / window.length;
+      return Math.sqrt(variance);
+    });
+    const bollMid = ma;
+    const bollUpper = bollMid.map(function(v, i) { return v == null || std20[i] == null ? null : v + (std20[i] * 2); });
+    const bollLower = bollMid.map(function(v, i) { return v == null || std20[i] == null ? null : v - (std20[i] * 2); });
+
+    const ema12 = calculateEMA(closes, 12);
+    const ema26 = calculateEMA(closes, 26);
+    const macd = closes.map(function(_, i) { return ema12[i] - ema26[i]; });
+    const signal = calculateEMA(macd, 9);
+    const histogram = macd.map(function(v, i) { return v - signal[i]; });
+
+    const rsi = [];
+    let gainAvg = 0;
+    let lossAvg = 0;
+    for (let i = 0; i < closes.length; i += 1) {
+      if (i === 0) { rsi.push(null); continue; }
+      const change = closes[i] - closes[i - 1];
+      const gain = Math.max(change, 0);
+      const loss = Math.max(-change, 0);
+      if (i <= 14) {
+        gainAvg += gain;
+        lossAvg += loss;
+        rsi.push(null);
+      } else if (i === 15) {
+        gainAvg = (gainAvg + gain) / 14;
+        lossAvg = (lossAvg + loss) / 14;
+        const rs = lossAvg === 0 ? 100 : gainAvg / lossAvg;
+        rsi.push(100 - (100 / (1 + rs)));
+      } else {
+        gainAvg = ((gainAvg * 13) + gain) / 14;
+        lossAvg = ((lossAvg * 13) + loss) / 14;
+        const rs = lossAvg === 0 ? 100 : gainAvg / lossAvg;
+        rsi.push(100 - (100 / (1 + rs)));
+      }
+    }
+
+    return { ma, ema, bollUpper, bollMid, bollLower, volumes, macd, signal, histogram, rsi };
   }
 
   function routeForTab(tab) {
@@ -1421,6 +1600,158 @@ export function getDashboardHTML() {
     svg.insertBefore(title, svg.firstChild);
   }
 
+  function renderAssetTradingChart(symbol, sig, pos) {
+    const svg = document.getElementById('asset-spot-chart');
+    if (!svg) return;
+    const candles = aggregateCandles(symbol, state.timeframe).slice(-100);
+    if (!candles.length) {
+      svg.innerHTML = '<rect x="0" y="0" width="1200" height="620" fill="#0a121f"></rect><text x="24" y="40" fill="#8298be" font-size="16">Waiting for market data…</text>';
+      return;
+    }
+    const W = 1200;
+    const H = 620;
+    const chartTop = 24;
+    const chartBottom = 360;
+    const volTop = 380;
+    const volBottom = 450;
+    const macdTop = 462;
+    const macdBottom = 530;
+    const rsiTop = 542;
+    const rsiBottom = 604;
+    const px = 62;
+    const rightPad = 94;
+    let minPrice = Infinity;
+    let maxPrice = -Infinity;
+    candles.forEach(function(c) {
+      minPrice = Math.min(minPrice, c.l);
+      maxPrice = Math.max(maxPrice, c.h);
+    });
+    const pad = (maxPrice - minPrice || 1) * 0.12;
+    minPrice -= pad;
+    maxPrice += pad;
+    const cw = (W - px - rightPad) / candles.length;
+    function x(i) { return px + i * cw + (cw / 2); }
+    function yPrice(v) { return chartTop + ((maxPrice - v) / (maxPrice - minPrice || 1)) * (chartBottom - chartTop); }
+    function pathFrom(arr, fnY) {
+      return arr.map(function(v, i) {
+        if (!Number.isFinite(v)) return '';
+        return (i === 0 || !arr.slice(0, i).some(Number.isFinite) ? 'M' : 'L') + ' ' + x(i).toFixed(2) + ' ' + fnY(v).toFixed(2);
+      }).filter(Boolean).join(' ');
+    }
+    const indicators = computeIndicators(candles);
+    const rows = [];
+    for (let i = 0; i <= 6; i += 1) {
+      const yy = chartTop + ((chartBottom - chartTop) / 6) * i;
+      const price = maxPrice - ((maxPrice - minPrice) / 6) * i;
+      rows.push('<line x1="' + px + '" y1="' + yy + '" x2="' + (W - rightPad) + '" y2="' + yy + '" stroke="#1f2f49" stroke-width="1"/>');
+      rows.push('<text x="' + (W - rightPad + 8) + '" y="' + (yy + 4) + '" fill="#8ca4cf" font-size="11">' + fmt(price, 2) + '</text>');
+    }
+    const xGuides = [];
+    [0, 0.25, 0.5, 0.75, 0.99].forEach(function(ratio) {
+      const i = Math.floor((candles.length - 1) * ratio);
+      const xx = x(i);
+      const ts = new Date(candles[i].t);
+      xGuides.push('<line x1="' + xx + '" y1="' + chartTop + '" x2="' + xx + '" y2="' + rsiBottom + '" stroke="#17263d" stroke-width="1"/>');
+      xGuides.push('<text x="' + (xx - 28) + '" y="' + (rsiBottom + 12) + '" fill="#6f87b0" font-size="10">' + ts.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + '</text>');
+    });
+    const candlesSvg = candles.map(function(c, i) {
+      const color = c.c >= c.o ? '#33d69f' : '#ff6666';
+      const cx = x(i);
+      return '<line x1="' + cx + '" y1="' + yPrice(c.h) + '" x2="' + cx + '" y2="' + yPrice(c.l) + '" stroke="' + color + '" stroke-width="1.1"/>' +
+        '<rect x="' + (cx - Math.max(1.4, cw * 0.35)) + '" y="' + Math.min(yPrice(c.o), yPrice(c.c)) + '" width="' + Math.max(2.8, cw * 0.7) + '" height="' + Math.max(1.6, Math.abs(yPrice(c.o) - yPrice(c.c))) + '" fill="' + color + '" opacity=".92"/>';
+    }).join('');
+    const overlays = [];
+    const lastClose = candles[candles.length - 1].c;
+    const liveY = yPrice(lastClose);
+    overlays.push('<line x1="' + px + '" y1="' + liveY + '" x2="' + (W - rightPad) + '" y2="' + liveY + '" stroke="#ffd166" stroke-width="1.2"/>');
+    overlays.push('<rect x="' + (W - rightPad + 6) + '" y="' + (liveY - 10) + '" width="84" height="20" rx="4" fill="#ffd166"></rect>');
+    overlays.push('<text x="' + (W - rightPad + 12) + '" y="' + (liveY + 4) + '" fill="#0a1220" font-size="11" font-weight="700">' + fmt(lastClose, 2) + '</text>');
+    if (state.assetIndicatorFlags.MA) overlays.push('<path d="' + pathFrom(indicators.ma, yPrice) + '" fill="none" stroke="#56a8ff" stroke-width="1.4"/>');
+    if (state.assetIndicatorFlags.EMA) overlays.push('<path d="' + pathFrom(indicators.ema, yPrice) + '" fill="none" stroke="#c08bff" stroke-width="1.4"/>');
+    if (state.assetIndicatorFlags.BOLL) {
+      overlays.push('<path d="' + pathFrom(indicators.bollUpper, yPrice) + '" fill="none" stroke="#ffd166" stroke-width="1" stroke-dasharray="3 3"/>');
+      overlays.push('<path d="' + pathFrom(indicators.bollLower, yPrice) + '" fill="none" stroke="#ffd166" stroke-width="1" stroke-dasharray="3 3"/>');
+    }
+    [
+      { v: sig && sig.entry, c: '#ffd166', t: 'Entry' },
+      { v: sig && sig.tp, c: '#2dd5a1', t: 'TP' },
+      { v: sig && sig.sl, c: '#ff6666', t: 'SL' },
+    ].forEach(function(level) {
+      if (!Number.isFinite(Number(level.v))) return;
+      const yy = yPrice(Number(level.v));
+      overlays.push('<line x1="' + px + '" y1="' + yy + '" x2="' + (W - rightPad) + '" y2="' + yy + '" stroke="' + level.c + '" stroke-width="1" stroke-dasharray="4 3"/>');
+      overlays.push('<text x="' + (px + 6) + '" y="' + (yy - 4) + '" fill="' + level.c + '" font-size="10">' + level.t + ' ' + fmt(level.v, 2) + '</text>');
+    });
+    const volMax = Math.max.apply(null, indicators.volumes.concat([1]));
+    const volBars = state.assetIndicatorFlags.VOL ? indicators.volumes.map(function(v, i) {
+      const h = ((v / volMax) * (volBottom - volTop));
+      const color = candles[i].c >= candles[i].o ? 'rgba(51,214,159,.65)' : 'rgba(255,102,102,.65)';
+      return '<rect x="' + (x(i) - cw * 0.3) + '" y="' + (volBottom - h) + '" width="' + (cw * 0.6) + '" height="' + h + '" fill="' + color + '"/>';
+    }).join('') : '';
+    function scalePanel(arr, top, bottom) {
+      const valid = arr.filter(Number.isFinite);
+      const hi = Math.max.apply(null, valid.concat([1]));
+      const lo = Math.min.apply(null, valid.concat([-1]));
+      return function(v) { return top + ((hi - v) / (hi - lo || 1)) * (bottom - top); };
+    }
+    const yMacd = scalePanel(indicators.macd.concat(indicators.signal), macdTop, macdBottom);
+    const macdSvg = state.assetIndicatorFlags.MACD
+      ? '<path d="' + pathFrom(indicators.macd, yMacd) + '" fill="none" stroke="#4db6ff" stroke-width="1.2"/>' +
+        '<path d="' + pathFrom(indicators.signal, yMacd) + '" fill="none" stroke="#ffb86b" stroke-width="1.2"/>' +
+        indicators.histogram.map(function(v, i) {
+          if (!Number.isFinite(v)) return '';
+          const y0 = yMacd(0);
+          const yy = yMacd(v);
+          const color = v >= 0 ? 'rgba(51,214,159,.55)' : 'rgba(255,102,102,.55)';
+          return '<rect x="' + (x(i) - cw * 0.2) + '" y="' + Math.min(y0, yy) + '" width="' + (cw * 0.4) + '" height="' + Math.max(1, Math.abs(yy - y0)) + '" fill="' + color + '"/>';
+        }).join('')
+      : '';
+    const yRsi = function(v) { return rsiTop + ((100 - v) / 100) * (rsiBottom - rsiTop); };
+    const rsiSvg = state.assetIndicatorFlags.RSI
+      ? '<line x1="' + px + '" y1="' + yRsi(70) + '" x2="' + (W - rightPad) + '" y2="' + yRsi(70) + '" stroke="#574636" stroke-dasharray="3 3"/>' +
+        '<line x1="' + px + '" y1="' + yRsi(30) + '" x2="' + (W - rightPad) + '" y2="' + yRsi(30) + '" stroke="#365047" stroke-dasharray="3 3"/>' +
+        '<path d="' + pathFrom(indicators.rsi, yRsi) + '" fill="none" stroke="#e0a6ff" stroke-width="1.3"/>'
+      : '';
+
+    svg.innerHTML = '<rect x="0" y="0" width="' + W + '" height="' + H + '" fill="#0a121f"/>' +
+      rows.join('') + xGuides.join('') + candlesSvg + overlays.join('') +
+      '<line x1="' + px + '" y1="' + volTop + '" x2="' + (W - rightPad) + '" y2="' + volTop + '" stroke="#1f2f49"/>' + volBars +
+      '<line x1="' + px + '" y1="' + macdTop + '" x2="' + (W - rightPad) + '" y2="' + macdTop + '" stroke="#1f2f49"/>' + macdSvg +
+      '<line x1="' + px + '" y1="' + rsiTop + '" x2="' + (W - rightPad) + '" y2="' + rsiTop + '" stroke="#1f2f49"/>' + rsiSvg;
+  }
+
+  function renderAssetOrderPanel(symbol, price) {
+    const symbolOrders = state.orders.filter(function(o) { return (o.symbol || o.productId) === symbol; });
+    const asks = symbolOrders.filter(function(o) { return String(o.side || '').toUpperCase() === 'SELL'; }).slice(0, 8);
+    const bids = symbolOrders.filter(function(o) { return String(o.side || '').toUpperCase() !== 'SELL'; }).slice(0, 8);
+    const asksRows = asks.map(function(o) {
+      const p = Number(o.price || o.limitPrice || o.entryPrice);
+      const s = Number(o.size || o.quantity || o.qty || o.baseSize || 0);
+      return '<div class="asset-order-row ask"><span>' + (Number.isFinite(p) ? fmt(p, 2) : EMPTY_VALUE) + '</span><span class="num">' + fmt(s, 6) + '</span></div>';
+    }).join('');
+    const bidsRows = bids.map(function(o) {
+      const p = Number(o.price || o.limitPrice || o.entryPrice);
+      const s = Number(o.size || o.quantity || o.qty || o.baseSize || 0);
+      return '<div class="asset-order-row bid"><span>' + (Number.isFinite(p) ? fmt(p, 2) : EMPTY_VALUE) + '</span><span class="num">' + fmt(s, 6) + '</span></div>';
+    }).join('');
+    document.getElementById('asset-orderbook-rows').innerHTML = (asksRows + bidsRows) || '<div class="note">No live open orders for this symbol.</div>';
+
+    const trades = state.fills.filter(function(f) { return f.symbol === symbol; }).slice(0, 12).map(function(f) {
+      const side = String(f.side || '').toUpperCase();
+      return '<tr><td class="' + (side === 'BUY' ? 'up' : 'down') + '">' + side + '</td><td class="num">' + usd(f.price) + '</td><td class="num">' + fmt(Number(f.filledSize || f.size || f.qty || 0), 6) + '</td><td>' + age(f.filledAt || f.ts) + '</td></tr>';
+    }).join('');
+    document.getElementById('asset-trade-history-rows').innerHTML = trades || '<tr><td colspan="4" class="neutral">No recent trades</td></tr>';
+    document.getElementById('asset-book-market').textContent = CRYPTO_SET.has(symbol) ? 'Crypto · Real' : 'Equities · Paper';
+    document.getElementById('asset-book-open-orders').textContent = String(symbolOrders.length);
+    if (asks.length && bids.length) {
+      const bestAsk = Number(asks[0].price || asks[0].limitPrice || asks[0].entryPrice);
+      const bestBid = Number(bids[0].price || bids[0].limitPrice || bids[0].entryPrice);
+      document.getElementById('asset-book-spread').textContent = Number.isFinite(bestAsk) && Number.isFinite(bestBid) ? usd(Math.max(0, bestAsk - bestBid), 4) : EMPTY_VALUE;
+    } else {
+      document.getElementById('asset-book-spread').textContent = Number.isFinite(price) ? 'n/a @ ' + usd(price) : EMPTY_VALUE;
+    }
+  }
+
   function renderAssetTab() {
     const symbol = state.selectedSymbol;
     const sig = symbolSignal(symbol);
@@ -1448,10 +1779,14 @@ export function getDashboardHTML() {
 
     document.getElementById('asset-spot-signal').innerHTML = sideBadge(sig ? sig.side : 'WAIT');
     document.getElementById('asset-spot-confidence').textContent = Math.round(Number(sig?.confidence || 0) * 100) + '%';
+    document.getElementById('asset-spot-live').textContent = Number.isFinite(price) ? usd(price) : EMPTY_VALUE;
     document.getElementById('asset-spot-regime').textContent = sig?.indicators?.regime || decision?.regime || EMPTY_VALUE;
-    document.getElementById('asset-spot-risk').textContent = formatSignalLevel(sig, 'entry') + ' / ' + formatSignalLevel(sig, 'tp') + ' / ' + formatSignalLevel(sig, 'sl');
-    document.getElementById('asset-spot-position').textContent = pos ? (pos.side + ' · entry ' + usd(pos.entry) + ' · pnl ' + usd(pos.unrealizedPnL || 0)) : 'Flat';
-    drawSimpleChart('asset-spot-chart', symbol, state.timeframe, 340);
+    document.getElementById('asset-spot-entry').textContent = formatSignalLevel(sig, 'entry');
+    document.getElementById('asset-spot-tp').textContent = formatSignalLevel(sig, 'tp');
+    document.getElementById('asset-spot-sl').textContent = formatSignalLevel(sig, 'sl');
+    document.getElementById('asset-spot-position').textContent = pos ? (pos.side + ' · ' + usd(pos.unrealizedPnL || 0)) : 'Flat';
+    renderAssetTradingChart(symbol, sig, pos);
+    renderAssetOrderPanel(symbol, price);
 
     document.getElementById('asset-buy-usd').textContent = usd(usdAvailable);
     const buyUsd = Number(document.getElementById('asset-buy-size-usd').value || 0);
@@ -1489,6 +1824,20 @@ export function getDashboardHTML() {
     document.getElementById('asset-info-market').textContent = CRYPTO_SET.has(symbol) ? 'Crypto (real)' : 'Equities (paper)';
     document.getElementById('asset-info-size').textContent = pos ? fmt(pos.size, 6) : '0';
     document.getElementById('asset-info-confidence').textContent = Math.round(Number(sig?.confidence || 0) * 100) + '%';
+    Array.from(document.querySelectorAll('.asset-tf')).forEach(function(btn) {
+      btn.classList.toggle('active', btn.getAttribute('data-tf') === state.timeframe);
+    });
+    Array.from(document.querySelectorAll('.asset-ind')).forEach(function(btn) {
+      const key = btn.getAttribute('data-ind');
+      btn.classList.toggle('active', Boolean(state.assetIndicatorFlags[key]));
+    });
+    Array.from(document.querySelectorAll('.asset-order-tab')).forEach(function(btn) {
+      const isActive = btn.getAttribute('data-book-tab') === state.assetBookTab;
+      btn.classList.toggle('active', isActive);
+    });
+    document.getElementById('asset-book-orderbook').style.display = state.assetBookTab === 'orderbook' ? 'block' : 'none';
+    document.getElementById('asset-book-trades').style.display = state.assetBookTab === 'trades' ? 'block' : 'none';
+    document.getElementById('asset-book-info').style.display = state.assetBookTab === 'info' ? 'block' : 'none';
   }
 
   function renderPositionsTab() {
@@ -1737,6 +2086,28 @@ export function getDashboardHTML() {
           b.classList.toggle('active', b.getAttribute('data-tf') === state.timeframe);
         });
         renderChartTab();
+        renderAssetTab();
+      });
+    });
+    Array.from(document.querySelectorAll('.asset-tf')).forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        state.timeframe = btn.getAttribute('data-tf') || '1m';
+        document.getElementById('chart-timeframe').value = state.timeframe;
+        document.getElementById('control-timeframe-select').value = state.timeframe;
+        renderChartTab();
+        renderAssetTab();
+      });
+    });
+    Array.from(document.querySelectorAll('.asset-ind')).forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        const key = btn.getAttribute('data-ind');
+        state.assetIndicatorFlags[key] = !state.assetIndicatorFlags[key];
+        renderAssetTab();
+      });
+    });
+    Array.from(document.querySelectorAll('.asset-order-tab')).forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        state.assetBookTab = btn.getAttribute('data-book-tab') || 'orderbook';
         renderAssetTab();
       });
     });
