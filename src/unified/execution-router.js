@@ -175,7 +175,10 @@ export class UnifiedExecutionRouter {
         priceMap,
         balances: coinbaseBalances,
         reason: allocation.reason,
-        executionContext,
+        executionContext: {
+          ...executionContext,
+          rotationShortfallUsd: Number(allocation?.details?.rotationShortfallUsd || 0),
+        },
       });
       if (rotated) {
         const balancesAfterRotation = await coinbaseAdapter.getBalances().catch(() => coinbaseBalances);
@@ -249,7 +252,9 @@ export class UnifiedExecutionRouter {
   }
 
   _canRotateFromBalances(reason) {
-    return reason === 'NO_ALLOCATABLE_CAPITAL' || reason === 'NO_VALID_ORDER_NOTIONAL';
+    return reason === 'NO_ALLOCATABLE_CAPITAL'
+      || reason === 'NO_VALID_ORDER_NOTIONAL'
+      || reason === 'INSUFFICIENT_USD_BALANCE_REQUIRES_ROTATION';
   }
 
   _pushTradeAction(action) {
@@ -266,6 +271,18 @@ export class UnifiedExecutionRouter {
   }
 
   async _attemptRotation({ signal, priceMap, balances, reason, executionContext = {} }) {
+    const shortfallUsd = Number(executionContext.rotationShortfallUsd || 0);
+    const preferBalanceRotation = reason === 'INSUFFICIENT_USD_BALANCE_REQUIRES_ROTATION' || shortfallUsd > 0;
+    if (preferBalanceRotation) {
+      const balancedRotation = await this._attemptBalanceRotation({
+        signal,
+        priceMap,
+        balances,
+        reason,
+        executionContext,
+      });
+      if (balancedRotation) return true;
+    }
     const targetSymbol = String(signal?.symbol || '');
     const btcPrice = Number(priceMap?.['BTC-USD'] || 0);
     const btcAvailable = Number(balances?.BTC?.available || 0);
@@ -454,6 +471,63 @@ export class UnifiedExecutionRouter {
       log.warn('ROTATION_FAILED', {
         symbol: signal.symbol,
         fromSymbol: rotationTarget.productId,
+        error: error.message,
+      });
+      return false;
+    }
+  }
+
+  async _attemptBalanceRotation({ signal, priceMap, balances, reason, executionContext = {} }) {
+    const targetBase = String(signal?.symbol || '').split('-')[0];
+    const desiredShortfallUsd = Math.max(0, Number(executionContext.rotationShortfallUsd || 0));
+    const minRotationUsd = Math.max(10, Number(executionContext.rotationMinUsd || 50));
+    const rotationTargetUsd = Math.max(minRotationUsd, desiredShortfallUsd);
+    const candidates = Object.entries(balances || {})
+      .filter(([currency, bal]) => currency !== 'USD' && currency !== targetBase && Number(bal?.available || 0) > 0)
+      .map(([currency, bal]) => {
+        const productId = `${currency}-USD`;
+        const price = Number(priceMap?.[productId] || 0);
+        const available = Number(bal?.available || 0);
+        const usdValue = Number.isFinite(price) && price > 0 ? available * price : 0;
+        return { currency, productId, price, available, usdValue };
+      })
+      .filter((candidate) => candidate.usdValue >= minRotationUsd)
+      .sort((a, b) => b.usdValue - a.usdValue);
+    if (!candidates.length) return false;
+
+    const candidate = candidates[0];
+    const baseToSell = Math.min(candidate.available, rotationTargetUsd / Math.max(candidate.price, 1e-9));
+    if (!Number.isFinite(baseToSell) || baseToSell <= 0) return false;
+
+    log.info('ROTATION_DECISION', {
+      symbol: signal.symbol,
+      fromSymbol: candidate.productId,
+      reason,
+      desiredShortfallUsd,
+      rotationTargetUsd,
+      actionType: 'ROTATE_HELD_ASSET_TO_USD',
+    });
+    try {
+      const result = await createOrder({
+        productId: candidate.productId,
+        side: 'SELL',
+        baseSize: baseToSell.toFixed(8),
+      });
+      this._pushTradeAction({
+        ts: Date.now(),
+        symbol: candidate.productId,
+        side: 'SELL',
+        type: 'ROTATE_HELD_ASSET_TO_USD',
+        notionalUsd: candidate.price * baseToSell,
+        reason: 'EXIT_TO_REALLOCATE',
+        actionType: 'ROTATE_HELD_ASSET_TO_USD',
+      });
+      return Boolean(result);
+    } catch (error) {
+      log.warn('ROTATION_FAILED', {
+        symbol: signal.symbol,
+        fromSymbol: candidate.productId,
+        reason,
         error: error.message,
       });
       return false;
