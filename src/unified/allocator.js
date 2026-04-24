@@ -20,6 +20,24 @@ function clamp01(value, fallback = 0) {
   return Math.max(0, Math.min(1, n));
 }
 
+function toLiquidationCandidatesUsd(balances = {}, priceMap = {}, { excludeCurrency = '' } = {}) {
+  const excluded = String(excludeCurrency || '').toUpperCase();
+  return Object.entries(balances)
+    .filter(([currency, bal]) => {
+      if (currency === 'USD') return false;
+      if (currency === excluded) return false;
+      return Number(bal?.available || 0) > 0;
+    })
+    .map(([currency, bal]) => {
+      const symbol = `${currency}-USD`;
+      const price = Number(priceMap?.[symbol] || 0);
+      const available = Number(bal?.available || 0);
+      const usdValue = Number.isFinite(price) && price > 0 ? available * price : 0;
+      return { currency, symbol, available, price, usdValue };
+    })
+    .filter((item) => Number.isFinite(item.usdValue) && item.usdValue > 0);
+}
+
 export async function allocateSignal({ signal, positions, balancesByBroker, dailyLossUsd, adapter, proposedNotionalUsd, executionContext = {} }) {
   const limits = config.allocator;
   const riskPct = Number(signal.riskPct);
@@ -50,7 +68,6 @@ export async function allocateSignal({ signal, positions, balancesByBroker, dail
   const ethPrice = Number(executionContext.priceMap?.['ETH-USD'] || 0);
   const btcUsd = Number.isFinite(btcPrice) && btcPrice > 0 ? btcHeld * btcPrice : 0;
   const ethUsd = Number.isFinite(ethPrice) && ethPrice > 0 ? ethHeld * ethPrice : 0;
-  const rotatableCryptoUsd = btcUsd + ethUsd;
   const symbolBase = String(signal.symbol || '').split('-')[0];
   const symbolHeldUnits = Number(balancesByBroker.coinbase?.[symbolBase]?.total || 0);
   const symbolUsdPrice = Number(executionContext.priceMap?.[`${symbolBase}-USD`] || executionContext.priceMap?.[signal.symbol] || 0);
@@ -60,6 +77,10 @@ export async function allocateSignal({ signal, positions, balancesByBroker, dail
   const marketExposureUsd = signal.market === 'crypto' ? cryptoExposure : equityExposure;
   const marketPortfolioUsd = marketCash + marketExposureUsd;
   const openStrategyPositions = positions.filter((position) => position.market === signal.market);
+  const liquidationCandidates = signal.market === 'crypto'
+    ? toLiquidationCandidatesUsd(balancesByBroker.coinbase || {}, executionContext.priceMap || {}, { excludeCurrency: symbolBase })
+    : [];
+  const liquidatableCryptoUsd = liquidationCandidates.reduce((sum, candidate) => sum + candidate.usdValue, 0);
   if (signal.market === 'crypto') {
     log.info('CAPITAL_STATE_READ', {
       market: signal.market,
@@ -72,7 +93,7 @@ export async function allocateSignal({ signal, positions, balancesByBroker, dail
       symbolBase,
       symbolHeldUnits,
       symbolHeldUsd,
-      rotatableCryptoUsd,
+      liquidatableCryptoUsd,
       openStrategyPositions: openStrategyPositions.map((position) => ({
         symbol: position.symbol,
         size: position.size,
@@ -152,12 +173,12 @@ export async function allocateSignal({ signal, positions, balancesByBroker, dail
       availableCash,
       note: 'NO_USD_FOR_ENTRY_PREFERS_EXISTING_CRYPTO_MANAGEMENT',
     });
-    if (signal.market === 'crypto' && rotatableCryptoUsd > 0) {
+    if (signal.market === 'crypto' && liquidatableCryptoUsd > 0) {
       log.info('ROTATION_DECISION', {
         market: signal.market,
         symbol: signal.symbol,
-        reason: 'NO_USD_AVAILABLE_USE_BTC_ETH_ROTATION',
-        rotatableCryptoUsd,
+        reason: 'NO_USD_AVAILABLE_USE_HELD_ASSET_ROTATION',
+        liquidatableCryptoUsd,
       });
     }
     return decision;
@@ -170,12 +191,15 @@ export async function allocateSignal({ signal, positions, balancesByBroker, dail
     }
   }
 
+  const effectiveBuyingPowerUsd = signal.market === 'crypto'
+    ? availableCash + liquidatableCryptoUsd
+    : availableCash;
   const notionalUsd = Math.min(
     Math.max(0, requestedNotional),
     rebalanceBudgetUsd,
     marketRemainingUsd,
-    availableCash,
-    availableCash * maxSingleTradeCashPct,
+    effectiveBuyingPowerUsd,
+    effectiveBuyingPowerUsd * maxSingleTradeCashPct,
     riskBoundNotional,
   );
 
@@ -191,6 +215,27 @@ export async function allocateSignal({ signal, positions, balancesByBroker, dail
       riskBoundNotional,
     });
     return decision;
+  }
+
+  if (signal.market === 'crypto' && availableCash < notionalUsd) {
+    const rotationShortfallUsd = notionalUsd - availableCash;
+    if (liquidatableCryptoUsd > 0) {
+      const decision = {
+        approved: false,
+        reason: 'INSUFFICIENT_USD_BALANCE_REQUIRES_ROTATION',
+        details: {
+          availableCash,
+          desiredNotionalUsd: notionalUsd,
+          rotationShortfallUsd,
+          liquidatableCryptoUsd,
+          liquidationCandidates: liquidationCandidates
+            .sort((a, b) => b.usdValue - a.usdValue)
+            .slice(0, 5),
+        },
+      };
+      log.info('CAPITAL_ALLOCATION_DECISION', { market: signal.market, symbol: signal.symbol, ...decision });
+      return decision;
+    }
   }
 
   const minCheck = await adapter.validateMinOrder({
